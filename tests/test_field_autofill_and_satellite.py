@@ -52,8 +52,10 @@ def test_satellite_active_monitoring_layers():
     assert "gpm_imerg_precipitation_rate" in layer_ids
 
     for l in layers:
-        assert "{z}/{y}/{x}" in l["tile_url"]
-        assert l["layer_type"] == "wmts"
+        if l["layer_type"] == "wmts":
+            assert "{z}/{y}/{x}" in l["tile_url"]
+        else:
+            assert l["layer_type"] == "wms" and l["wms_url"]
         assert l["source"]
 
 
@@ -132,7 +134,7 @@ def test_earth_data_api_endpoints_integration():
     )
     assert sat_resp.status_code == 200
     sat_body = sat_resp.json()
-    assert len(sat_body["layers"]) == 3
+    assert len(sat_body["layers"]) >= 3
     assert sat_body["overpass_schedule"]["acquisitions_count"] >= 2
 
 

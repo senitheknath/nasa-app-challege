@@ -9,10 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..identity.farm_records import polygon_area_hectares
-from agroshift.earth_data.providers import soil_context, terrain_context
+from agroshift.earth_data.providers import soil_context, terrain_grid_context
 from agroshift.earth_data.cache import get_cached, set_cached
-from agroshift.earth_data.satellite import normalize_boundary
-
+from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
 
 def derive_field_autofill(
     latitude: float,
@@ -25,10 +24,14 @@ def derive_field_autofill(
     offline: bool = False,
 ) -> dict[str, Any]:
     """Derive non-fabricated initial farm parameters from verified Earth observations."""
-    norm_boundary = normalize_boundary(boundary)
-    cached = get_cached("field_autofill", latitude, longitude)
+    soil_geom = resolve_geometry("soil_grids", latitude, longitude, boundary=boundary, area_ha=area_ha)
+    terrain_geom = resolve_geometry("terrain_dem", latitude, longitude, boundary=boundary, area_ha=area_ha)
+    norm_boundary = terrain_geom["polygon"] or normalize_boundary(boundary)
+    cache_type = f"field_autofill:{terrain_geom['cache_suffix']}"
+    cached = get_cached(cache_type, latitude, longitude)
     if cached and not offline and norm_boundary is None and area_ha is None:
         return cached["data"]
+
     # 1. Soil pH (ISRIC SoilGrids 2.0 0-5 cm)
     soil_res = soil_context(latitude, longitude, offline=offline)
     ph_val = soil_res.get("value")
@@ -38,8 +41,8 @@ def derive_field_autofill(
         else "SoilGrids unavailable; enter measured pH or leave blank"
     )
 
-    # 2. Terrain & Drainage Prior (Copernicus DEM 90m)
-    terrain_res = terrain_context(latitude, longitude, offline=offline)
+    # 2. Terrain & Drainage Prior (Copernicus DEM 90m, adaptive polygon grid or centroid)
+    terrain_res = terrain_grid_context(terrain_geom["points"], offline=offline)
     drainage_val = terrain_res.get("suggested_drainage_prior")
     slope_pct = terrain_res.get("regional_slope_pct")
     elev_m = terrain_res.get("elevation_m")
@@ -121,6 +124,10 @@ def derive_field_autofill(
                 "value": drainage_val,
                 "slope_pct": slope_pct,
                 "elevation_m": elev_m,
+                "elevation_min_m": terrain_res.get("elevation_min_m"),
+                "elevation_max_m": terrain_res.get("elevation_max_m"),
+                "sample_points": terrain_res.get("sample_points", 1),
+                "precision_mode": terrain_geom["active_mode"],
                 "source": drainage_source,
                 "confidence": "inferred_terrain" if slope_pct is not None else "heuristic_fallback",
                 "can_override": True,
@@ -128,8 +135,13 @@ def derive_field_autofill(
             "area_ha": area_item,
             "climate": climate_item,
         },
+        "precision_policy": {
+            "soil_grids": soil_geom["active_mode"],
+            "terrain_dem": terrain_geom["active_mode"],
+        },
     }
 
     if norm_boundary is None and area_ha is None:
-        set_cached("field_autofill", latitude, longitude, result, source="agroshift_autofill")
+        set_cached(cache_type, latitude, longitude, result, source="agroshift_autofill")
+
     return result

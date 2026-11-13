@@ -1,0 +1,37 @@
+{
+  "spatial_precision": {
+    "climate_power": {
+      "mode": "centroid"
+    },
+    "soil_grids": {
+      "mode": "sampled_grid",
+      "min_area_ha": 5.0,
+      "max_points": 5
+    },
+    "terrain_dem": {
+      "mode": "sampled_grid",
+      "min_area_ha": 1.0,
+      "max_points": 9
+    },
+    "satellite_cmr": {
+      "mode": "full_polygon",
+      "max_vertices": 250,
+      "fallback_mode": "bbox",
+      "fallback_radius_deg": 0.1
+    }
+  },
+  "cache": {
+    "geo_cache_ttl_hours": 168,
+    "climate_lru_max_cells": 16
+  },
+  "monitoring_layers": {
+    "default_lag_days": 3,
+    "enabled": [
+      "smap_surface_soil_moisture",
+      "modis_vegetation_vigor_ndvi",
+      "gpm_imerg_precipitation_rate",
+      "soilgrids_ph",
+      "soilgrids_clay"
+    ]
+  }
+}

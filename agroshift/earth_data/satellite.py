@@ -13,8 +13,9 @@ from typing import Any
 import urllib.parse
 import urllib.request
 
+from agroshift.config import load_platform_config
 from agroshift.earth_data.cache import get_cached, set_cached
-
+from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
 GIBS_WMTS_BASE = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"
 
@@ -24,20 +25,26 @@ def get_active_monitoring_layers(
     _longitude: float,
     target_date: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return configured NASA GIBS WMTS raster layers ready for map streaming."""
+    """Return configured NASA GIBS WMTS & ISRIC SoilGrids WMS layers ready for global map overlays."""
+    cfg = load_platform_config()
+    mon_cfg = cfg.get("monitoring_layers", {})
+    lag_days = int(mon_cfg.get("default_lag_days", 3))
+    enabled = set(mon_cfg.get("enabled") or [])
+
     if not target_date:
-        # Default to 3 days ago to guarantee composite availability across timezones
-        ref_date = date.today() - timedelta(days=3)
+        ref_date = date.today() - timedelta(days=lag_days)
         obs_date = ref_date.isoformat()
     else:
         obs_date = str(target_date)
 
-    return [
+    all_layers = [
         {
             "id": "smap_surface_soil_moisture",
             "name": "SMAP Soil Moisture (9 km)",
+            "category": "moisture",
             "observation_date": obs_date,
             "layer_type": "wmts",
+            "max_native_zoom": 6,
             "wmts_layer": "SMAP_L3_Passive_Enhanced_Day_Soil_Moisture",
             "tile_url": f"{GIBS_WMTS_BASE}/SMAP_L3_Passive_Enhanced_Day_Soil_Moisture/default/{obs_date}/GoogleMapsCompatible_Level6/{{z}}/{{y}}/{{x}}.png",
             "unit": "cm³/cm³ (volumetric)",
@@ -48,8 +55,10 @@ def get_active_monitoring_layers(
         {
             "id": "modis_vegetation_vigor_ndvi",
             "name": "MODIS Vegetation Index (NDVI)",
+            "category": "plant_state",
             "observation_date": obs_date,
             "layer_type": "wmts",
+            "max_native_zoom": 9,
             "wmts_layer": "MODIS_Terra_NDVI_8Day",
             "tile_url": f"{GIBS_WMTS_BASE}/MODIS_Terra_NDVI_8Day/default/{obs_date}/GoogleMapsCompatible_Level9/{{z}}/{{y}}/{{x}}.png",
             "unit": "NDVI (-0.2 to 1.0)",
@@ -60,8 +69,10 @@ def get_active_monitoring_layers(
         {
             "id": "gpm_imerg_precipitation_rate",
             "name": "GPM IMERG Rain Rate",
+            "category": "moisture",
             "observation_date": obs_date,
             "layer_type": "wmts",
+            "max_native_zoom": 6,
             "wmts_layer": "IMERG_Precipitation_Rate",
             "tile_url": f"{GIBS_WMTS_BASE}/IMERG_Precipitation_Rate/default/{obs_date}/GoogleMapsCompatible_Level6/{{z}}/{{y}}/{{x}}.png",
             "unit": "mm/hr",
@@ -69,78 +80,36 @@ def get_active_monitoring_layers(
             "source": "NASA GES DISC / GPM Constellation",
             "description": "Near-real-time satellite precipitation rate tracking active rainstorms.",
         },
+        {
+            "id": "soilgrids_ph",
+            "name": "SoilGrids Soil pH (0–5 cm)",
+            "category": "soil",
+            "observation_date": "2020-static",
+            "layer_type": "wms",
+            "wms_url": "https://maps.isric.org/mapserv?map=/map/phh2o.map",
+            "wms_layers": "phh2o_0-5cm_mean",
+            "unit": "pH (H₂O)",
+            "resolution": "250 m",
+            "source": "ISRIC SoilGrids 2.0",
+            "description": "Global topsoil pH layer (0–5 cm) for overlaying soil acidity/alkalinity on the field map.",
+        },
+        {
+            "id": "soilgrids_clay",
+            "name": "SoilGrids Clay Content (0–5 cm)",
+            "category": "soil",
+            "observation_date": "2020-static",
+            "layer_type": "wms",
+            "wms_url": "https://maps.isric.org/mapserv?map=/map/clay.map",
+            "wms_layers": "clay_0-5cm_mean",
+            "unit": "g/kg",
+            "resolution": "250 m",
+            "source": "ISRIC SoilGrids 2.0",
+            "description": "Global topsoil clay fraction (0–5 cm) for drainage and water-retention context.",
+        },
     ]
-
-
-def normalize_boundary(boundary: Any) -> dict | None:
-    """Normalize GeoJSON Polygon, UI parcel {coordinates:[{lat,lng}]}, or [{lat,lng}] into GeoJSON Polygon."""
-    if not boundary:
-        return None
-    if isinstance(boundary, dict):
-        if boundary.get("type") == "Polygon" and isinstance(boundary.get("coordinates"), list):
-            return boundary
-        raw_coords = boundary.get("coordinates")
-        if isinstance(raw_coords, list):
-            boundary = raw_coords
-        else:
-            return None
-    if isinstance(boundary, list) and len(boundary) >= 3:
-        ring: list[list[float]] = []
-        for pt in boundary:
-            if isinstance(pt, dict) and "lat" in pt and ("lng" in pt or "lon" in pt):
-                lon = float(pt.get("lng", pt.get("lon")))
-                lat = float(pt["lat"])
-                ring.append([lon, lat])
-            elif isinstance(pt, (list, tuple)) and len(pt) >= 2:
-                # Assume [lat, lon] from Leaflet/UI unless clearly GeoJSON
-                ring.append([float(pt[1]), float(pt[0])])
-        if len(ring) >= 3:
-            if ring[0] != ring[-1]:
-                ring.append(ring[0])
-            return {"type": "Polygon", "coordinates": [ring]}
-    return None
-
-
-def _bbox_from_area_ha(lat: float, lon: float, area_ha: float) -> str:
-    """Compute a square W,S,E,N bounding box centered at (lat, lon) covering area_ha hectares."""
-    import math
-    side_m = math.sqrt(max(float(area_ha), 0.01) * 10000.0)
-    half_m = side_m / 2.0
-    dlat = half_m / 111320.0
-    cos_lat = max(math.cos(math.radians(lat)), 0.01)
-    dlon = half_m / (111320.0 * cos_lat)
-    return f"{lon - dlon:.5f},{lat - dlat:.5f},{lon + dlon:.5f},{lat + dlat:.5f}"
-
-
-def _format_bbox(
-    lat: float,
-    lon: float,
-    boundary: Any = None,
-    bbox: Any = None,
-    area_ha: float | None = None,
-    delta_deg: float = 0.1,
-) -> str:
-    """Derive bounding box string (W,S,E,N) from bbox, boundary, area_ha, or point radius."""
-    if bbox:
-        if isinstance(bbox, str) and len(bbox.split(",")) == 4:
-            return bbox.strip()
-        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            return f"{float(bbox[0]):.5f},{float(bbox[1]):.5f},{float(bbox[2]):.5f},{float(bbox[3]):.5f}"
-        if isinstance(bbox, dict) and all(k in bbox for k in ("west", "south", "east", "north")):
-            return f"{float(bbox['west']):.5f},{float(bbox['south']):.5f},{float(bbox['east']):.5f},{float(bbox['north']):.5f}"
-
-    poly = normalize_boundary(boundary)
-    if poly:
-        ring = poly["coordinates"][0]
-        lons = [p[0] for p in ring if len(p) >= 2]
-        lats = [p[1] for p in ring if len(p) >= 2]
-        if lons and lats:
-            return f"{min(lons):.5f},{min(lats):.5f},{max(lons):.5f},{max(lats):.5f}"
-
-    if area_ha is not None and float(area_ha) > 0:
-        return _bbox_from_area_ha(lat, lon, float(area_ha))
-
-    return f"{lon - delta_deg:.4f},{lat - delta_deg:.4f},{lon + delta_deg:.4f},{lat + delta_deg:.4f}"
+    if enabled:
+        return [layer for layer in all_layers if layer["id"] in enabled]
+    return all_layers
 
 
 def fetch_satellite_overpasses(
@@ -153,12 +122,19 @@ def fetch_satellite_overpasses(
     offline: bool = False,
     limit_per_sensor: int = 2,
 ) -> dict[str, Any]:
-    """Query NASA CMR for recent and upcoming Earth observation scenes over the field."""
-    # Check cache first only for default point queries
-    if boundary is None and bbox is None and area_ha is None:
-        cached = get_cached("satellite_overpass", latitude, longitude)
-        if cached and not offline:
-            return cached["data"]
+    """Query NASA CMR for Earth observation scenes using config-driven precision (full_polygon or bbox)."""
+    geom = resolve_geometry(
+        "satellite_cmr",
+        latitude,
+        longitude,
+        boundary=boundary,
+        bbox=bbox,
+        area_ha=area_ha,
+    )
+    cache_type = f"satellite_overpass:{geom['cache_suffix']}"
+    cached = get_cached(cache_type, latitude, longitude)
+    if cached and not offline:
+        return cached["data"]
 
     sensors = [
         ("HLSL30", "Harmonized Landsat Sentinel-2 (30 m)", "surface_reflectance_ndvi", "2–3 days"),
@@ -166,16 +142,21 @@ def fetch_satellite_overpasses(
         ("SPL3SMP_E", "SMAP Enhanced Soil Moisture (9 km)", "root_zone_wetness", "1–2 days"),
     ]
 
-    bbox_str = _format_bbox(latitude, longitude, boundary=boundary, bbox=bbox, area_ha=area_ha)
+    bbox_str = geom["bbox"]
+    cmr_polygon = geom["cmr_polygon"]
     acquisitions: list[dict[str, Any]] = []
+
     if not offline:
         for short_name, sensor_label, sensor_role, recurrence in sensors:
-            params = {
+            params: dict[str, str] = {
                 "short_name": short_name,
-                "bounding_box": bbox_str,
                 "page_size": str(limit_per_sensor),
                 "sort_key": "-start_date",
             }
+            if cmr_polygon and geom["active_mode"] == "full_polygon":
+                params["polygon"] = cmr_polygon
+            else:
+                params["bounding_box"] = bbox_str
             url = f"{CMR_GRANULES_URL}?{urllib.parse.urlencode(params)}"
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "AgroShift-SatelliteMonitor/1.0"})
@@ -227,12 +208,14 @@ def fetch_satellite_overpasses(
         ]
 
     result = {
+        "precision_mode": geom["active_mode"],
+        "polygon_hash": geom["polygon_hash"],
         "bounding_box": bbox_str,
         "acquisitions_count": len(acquisitions),
         "acquisitions": acquisitions,
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Cache result
-    set_cached("satellite_overpass", latitude, longitude, result, source="nasa_cmr_api")
+    # Cache result under precision-aware key
+    set_cached(cache_type, latitude, longitude, result, source="nasa_cmr_api")
     return result

@@ -801,6 +801,49 @@ def terrain_context(latitude: float, longitude: float, *, offline: bool = False,
     )
 
 
+def terrain_grid_context(
+    points: list[tuple[float, float]],
+    *,
+    offline: bool = False,
+    record: bool = False,
+) -> dict:
+    """Batch-sample Copernicus DEM GLO-90 elevation across interior polygon points in one HTTP call."""
+    if not points:
+        raise ValueError("At least one coordinate point is required.")
+    if len(points) == 1:
+        return terrain_context(points[0][0], points[0][1], offline=offline, record=record)
+    center_lat, center_lon = points[0]
+    center_res = terrain_context(center_lat, center_lon, offline=offline, record=record)
+    url = "https://api.open-meteo.com/v1/elevation"
+    params = {
+        "latitude": ",".join(f"{p[0]:.5f}" for p in points),
+        "longitude": ",".join(f"{p[1]:.5f}" for p in points),
+    }
+
+    def _parse(body):
+        elevs = [float(x) for x in json.loads(body.decode("utf-8")).get("elevation", [])]
+        if not elevs:
+            return center_res
+        merged = dict(center_res)
+        merged["elevation_m"] = round(sum(elevs) / len(elevs), 1)
+        merged["elevation_min_m"] = round(min(elevs), 1)
+        merged["elevation_max_m"] = round(max(elevs), 1)
+        merged["elevation_range_m"] = round(max(elevs) - min(elevs), 1)
+        merged["sample_points"] = len(elevs)
+        return merged
+
+    grid_res = reference(
+        url,
+        params,
+        _parse,
+        kind="digital_elevation_model",
+        detail=f"Copernicus DEM GLO-90 (~90 m) multi-point polygon sample ({len(points)} interior points).",
+        offline=offline,
+        record=record,
+    )
+    return grid_res if grid_res.get("elevation_min_m") is not None else center_res
+
+
 def seasonal_outlook_context(
     latitude: float, longitude: float, *, offline: bool = False, record: bool = False
 ) -> dict:
