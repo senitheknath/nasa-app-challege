@@ -48,7 +48,7 @@ from agroshift.providers import (
     wosis_profiles,
 )
 from agroshift.refresh_manager import evaluate_refresh_governance
-from agroshift.rotation import evaluate_transition, plan_global_rotations
+from agroshift.rotation import CropProfile, EnvironmentContext, evaluate_transition, plan_global_rotations
 from agroshift.screening import find_options
 from agroshift.soil import (
     classify_usda_texture,
@@ -356,6 +356,26 @@ def test_global_rotation_planner_and_pest_context():
     assert pest["chemical_prescription_included"] is False
     assert pest["outbreak_probability_predicted"] is False
 
+
+def test_science_informed_rotation_rules():
+    # 1. Nutrient replenishment: heavy feeder followed by nitrogen fixer
+    p_maize = CropProfile(id="maize", name="Maize", family="Poaceae", nutrient_demand="heavy")
+    p_pea = CropProfile(id="dry_pea", name="Dry Pea", family="Fabaceae", is_nitrogen_fixer=True, nutrient_demand="fixer")
+    trans_nutr = evaluate_transition(p_maize, p_pea)
+    assert any(f["rule_id"] == "nutrient_replenishment" for f in trans_nutr["findings"])
+
+    # 2. Pathogen overlap: cross-family or same-family common pest carryover
+    p_tom = CropProfile(id="tomato", name="Tomato", family="Solanaceae", pests=frozenset({"Fusarium", "Bacterial wilt"}))
+    p_pot = CropProfile(id="potato", name="Potato", family="Solanaceae", pests=frozenset({"Fusarium", "Late blight"}))
+    trans_pest = evaluate_transition(p_tom, p_pot)
+    assert any(f["rule_id"] == "pest_pathogen_overlap" for f in trans_pest["findings"])
+
+    # 3. Water deficit carryover: back-to-back high-demand crops under rainfed conditions
+    env_dry = EnvironmentContext(irrigation="rainfed")
+    p_c1 = CropProfile(id="c1", name="Crop 1", kc_max=1.2)
+    p_c2 = CropProfile(id="c2", name="Crop 2", kc_max=1.2)
+    trans_water = evaluate_transition(p_c1, p_c2, env=env_dry)
+    assert any(f["rule_id"] == "water_deficit_carryover" for f in trans_water["findings"])
 
 def test_validation_ablation_aquacrop_prototype_and_refresh_governance():
     demo = load_snapshot(ROOT / "data" / "demo_power.json")

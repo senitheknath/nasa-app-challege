@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Sequence
 
-from agroshift.science.knowledge.knowledge import crop_by_id, global_traits
+from agroshift.science.knowledge.knowledge import crop_by_id, global_traits, growth_stages, pest_context
 from agroshift.science.decision.screening import find_options
-from .contracts import CropProfile, RotationConfig, RuleFinding, TransitionStatus
+from .contracts import CropProfile, EnvironmentContext, RotationConfig, RuleFinding, TransitionStatus
 from .rules import DEFAULT_RULES, TransitionRule
 
 
@@ -21,6 +21,7 @@ def evaluate_transition(
     w2: Any = None,
     config: RotationConfig = RotationConfig(),
     rules: Sequence[TransitionRule] = DEFAULT_RULES,
+    env: EnvironmentContext | None = None,
 ) -> dict[str, Any]:
     """Evaluate consecutive crop transition using composable agronomic rules."""
     p1 = (
@@ -41,8 +42,10 @@ def evaluate_transition(
 
     findings: list[RuleFinding] = []
     for rule in rules:
-        findings.extend(rule(p1, p2, prev, w1, w2, config))
-
+        try:
+            findings.extend(rule(p1, p2, prev, w1, w2, config, env))
+        except TypeError:
+            findings.extend(rule(p1, p2, prev, w1, w2, config))
     blockers = [f.message for f in findings if f.severity == "blocker"]
     cautions = [f.message for f in findings if f.severity == "caution"]
     benefits = [f.message for f in findings if f.severity == "benefit"]
@@ -143,6 +146,8 @@ def plan_global_rotations(
         cid: CropProfile.from_crop_and_traits(
             crop_by_id(cid) or {"id": cid, "name": cards_s1[cid]["name"]},
             traits_by_crop.get(cid),
+            growth_stages=growth_stages(cid),
+            pest_records=pest_context(cid),
         )
         for cid in pool
     }
@@ -155,6 +160,19 @@ def plan_global_rotations(
             s1_card = cards_s1[c1_id]
             s2_card = cards_s2[c2_id]
 
+            w1_info = s1_card.get("water") if isinstance(s1_card.get("water"), dict) else {}
+            w2_info = s2_card.get("water") if isinstance(s2_card.get("water"), dict) else {}
+            env = EnvironmentContext(
+                drainage=getattr(farm, "drainage", "unknown") or "unknown",
+                soil_texture=getattr(farm, "soil_type", "unknown") or "unknown",
+                soil_ph=getattr(farm, "ph", None),
+                slope_pct=getattr(farm, "slope", None),
+                irrigation=getattr(farm, "irrigation", "unknown") or "unknown",
+                rainfall_s1_mm=w1_info.get("rainfall_mm"),
+                water_need_s1_mm=w1_info.get("water_need_mm"),
+                water_need_s2_mm=w2_info.get("water_need_mm"),
+            )
+
             trans = evaluate_transition(
                 p1,
                 p2,
@@ -162,6 +180,7 @@ def plan_global_rotations(
                 w1=w1,
                 w2=w2,
                 config=config,
+                env=env,
             )
 
             slot_blocked = s1_card["status"] == "blocked" or s2_card["status"] == "blocked" or trans["status"] == "blocked"
