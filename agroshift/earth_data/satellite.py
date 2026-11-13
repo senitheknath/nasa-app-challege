@@ -39,7 +39,7 @@ def get_active_monitoring_layers(
             "observation_date": obs_date,
             "layer_type": "wmts",
             "wmts_layer": "SMAP_L3_Passive_Enhanced_Day_Soil_Moisture",
-            "tile_url": f"{GIBS_WMTS_BASE}/SMAP_L3_Passive_Enhanced_Day_Soil_Moisture/default/{obs_date}/GoogleMapsCompatible_Level9/{{z}}/{{y}}/{{x}}.png",
+            "tile_url": f"{GIBS_WMTS_BASE}/SMAP_L3_Passive_Enhanced_Day_Soil_Moisture/default/{obs_date}/GoogleMapsCompatible_Level6/{{z}}/{{y}}/{{x}}.png",
             "unit": "cm³/cm³ (volumetric)",
             "resolution": "9 km",
             "source": "NASA NSIDC DAAC / SMAP Radiometer",

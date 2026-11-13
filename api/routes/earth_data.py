@@ -17,22 +17,22 @@ from agroshift.geography import search_places
 from agroshift.locations import countries_at, country_map_view, country_regions
 from agroshift.power import DataError
 
-from api.deps import get_dataset, json_response, serialize_climatology
+from api.deps import get_dataset, json_response, resolve_farm_context, serialize_climatology
 
 
 async def autofill(request: Request) -> Response:
     """Derive smart field autofill (geodetic area, SoilGrids pH, Copernicus DEM drainage)."""
     try:
         payload = await request.json()
-        country = str(payload.get("country", "LK")).upper()
-        latitude = float(payload["latitude"])
-        longitude = float(payload["longitude"])
+        ctx = resolve_farm_context(request, payload)
+        country = ctx["country"]
+        latitude = ctx["latitude"]
+        longitude = ctx["longitude"]
         offline = bool(payload.get("offline", False))
         refresh = bool(payload.get("refresh", False))
-        boundary = payload.get("boundary") or payload.get("parcel")
-        raw_area = payload.get("area_ha", payload.get("areaHectares"))
+        boundary = ctx["boundary"]
+        raw_area = ctx["area_ha"]
         area_ha = float(raw_area) if raw_area is not None else None
-
         def _run():
             ds = get_dataset(latitude, longitude, refresh=refresh)
             result = derive_field_autofill(
@@ -57,14 +57,14 @@ async def satellite(request: Request) -> Response:
     """Fetch NASA GIBS WMTS map layers and NASA CMR satellite overpass schedules."""
     try:
         payload = await request.json()
-        latitude = float(payload["latitude"])
-        longitude = float(payload["longitude"])
+        ctx = resolve_farm_context(request, payload)
+        latitude = ctx["latitude"]
+        longitude = ctx["longitude"]
         offline = bool(payload.get("offline", False))
-        boundary = payload.get("boundary") or payload.get("parcel")
-        bbox = payload.get("bbox")
-        raw_area = payload.get("area_ha", payload.get("areaHectares"))
+        boundary = ctx["boundary"]
+        bbox = ctx["bbox"]
+        raw_area = ctx["area_ha"]
         area_ha = float(raw_area) if raw_area is not None else None
-
         def _run():
             layers = get_active_monitoring_layers(latitude, longitude)
             overpasses = fetch_satellite_overpasses(
@@ -89,9 +89,10 @@ async def climate(request: Request) -> Response:
     """Fetch NASA POWER 25-year climate summary, 12-month climatology, and suggested window."""
     try:
         payload = await request.json()
-        country = str(payload.get("country", "LK")).upper()
-        latitude = float(payload["latitude"])
-        longitude = float(payload["longitude"])
+        ctx = resolve_farm_context(request, payload)
+        country = ctx["country"]
+        latitude = ctx["latitude"]
+        longitude = ctx["longitude"]
         offline = bool(payload.get("offline", False))
         refresh = bool(payload.get("refresh", False))
 
