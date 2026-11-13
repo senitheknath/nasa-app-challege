@@ -12,8 +12,8 @@ import sqlite3
 import threading
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB_PATH = ROOT / "data" / "geo_cache.db"
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DB_PATH = ROOT / ".cache" / "geo_cache.db"
 _LOCAL_LOCK = threading.Lock()
 
 

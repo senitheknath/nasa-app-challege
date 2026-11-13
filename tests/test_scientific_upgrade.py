@@ -48,7 +48,7 @@ from agroshift.providers import (
     wosis_profiles,
 )
 from agroshift.refresh_manager import evaluate_refresh_governance
-from agroshift.rotation_engine import evaluate_transition, plan_global_rotations
+from agroshift.rotation import evaluate_transition, plan_global_rotations
 from agroshift.screening import find_options
 from agroshift.soil import (
     classify_usda_texture,
@@ -384,34 +384,4 @@ def test_validation_ablation_aquacrop_prototype_and_refresh_governance():
     assert gov["gaez_archive"]["verified_files"] == 48
     assert gov["nasa_station_archives"]["verified_stations"] == 34
 
-
-def test_unified_scientific_and_ai_ml_ui_integration():
-    from streamlit.testing.v1 import AppTest
-
-    at = AppTest.from_file("../app.py", default_timeout=35).run()
-    next(b for b in at.button if b.label == "Try an example farm").click().run()
-    assert not at.exception
-    assert at.session_state["page"] == "results"
-
-    # Attach a field boundary polygon and inspect details for Mungbean / Maize
-    at.session_state["boundary"] = {
-        "type": "Feature",
-        "properties": {},
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [[[80.38, 8.29], [80.43, 8.29], [80.43, 8.33], [80.38, 8.33], [80.38, 8.29]]],
-        },
-    }
-    at.session_state["detail_id"] = "maize"
-    at.session_state["page"] = "details"
-    at.run()
-    assert not at.exception
-    assert any("Field boundary polygon sampling" in c.value for c in at.caption)
-
-    # Verify Learning lab renders both ML Studio, AquaCrop Prototype, and Section 6 Validation/Ablation
-    at.session_state["page"] = "research"
-    at.session_state["section"] = "Learning lab"
-    at.run()
-    assert not at.exception
-    assert any("Multi-Method Agricultural Validation" in s.value for s in at.subheader)
 

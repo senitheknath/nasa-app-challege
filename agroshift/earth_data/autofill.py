@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .farm_records import polygon_area_hectares
-from .geo_cache import get_cached, set_cached
-from .providers import soil_context, terrain_context
+from ..farm_records import polygon_area_hectares
+from ..providers import soil_context, terrain_context
+from .cache import get_cached, set_cached
 
 
 def derive_field_autofill(
