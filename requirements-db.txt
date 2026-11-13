@@ -1,5 +1,0 @@
-# Optional PostgreSQL client. SQLite reference data needs only Python.
-psycopg[binary]==3.3.8
-
-# Required only for optional Streamlit OIDC sign-in.
-Authlib==1.9.5

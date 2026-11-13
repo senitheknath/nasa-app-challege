@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TERRAFORGE AGRO | Industrial Agronomic Intelligence Platform</title>
+  
+  <!-- Apple System Font Fallback & Inter Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Core Application Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- =========================================================================
+       1. Translucent Apple Navigation Bar
+       ========================================================================= -->
+  <header class="app-navbar">
+    <div class="nav-container">
+      <a href="index.html" class="nav-brand">
+        <div class="brand-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 0 1 10 10c0 5.5-4.5 10-10 10S2 17.5 2 12A10 10 0 0 1 12 2z"></path>
+            <path d="M12 6v12"></path>
+            <path d="M8 10a5 5 0 0 1 8 0"></path>
+            <path d="M7 15a7 7 0 0 1 10 0"></path>
+          </svg>
+        </div>
+        <div class="brand-text-wrap">
+          <span class="brand-title">TERRAFORGE AGRO</span>
+          <span class="brand-subtitle">Industrial Agronomic Intelligence</span>
+        </div>
+      </a>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       2. Hero Section + Highlighted Search Bar Directly Below Caption
+       ========================================================================= -->
+  <section class="hero-section">
+    <div class="hero-content">
+      <div class="hero-badge-pill">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <span>INDUSTRIAL PRECISION AG-ENGINEERING</span>
+      </div>
+
+      <h1 class="hero-title">
+        Industrial Agriculture <br>
+        <span class="text-gradient">Optimization & Spatial Planning</span>
+      </h1>
+
+      <p class="hero-description">
+        Define the parcels of the field boundaries using polygons, identify the desired crop rotations, and optimize agronomic gains in relation to water, soil, erosion, and economic returns.
+      </p>
+
+
+      <!-- Palette-Highlighted Country Search Bar (Directly Below Caption) -->
+      <div class="highlighted-search-wrapper">
+        <div class="highlighted-search-box">
+          <svg class="highlighted-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg> 
+              <input type="text" id="landingCountrySearchInput" class="highlighted-search-input" 
+                 placeholder="Search your country ( e.g. Sri Lanka )" 
+                 autocomplete="off">
+        </div>
+
+        <!-- Autocomplete Dropdown -->
+        <div class="highlighted-dropdown-list" id="landingCountryDropdown"></div>
+      </div>
+
+      <!-- Dynamic Country Feedback & Continue Button Box -->
+      <div class="landing-feedback-wrap" id="landingFeedbackBox"></div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       3. Stage Progress Tracker Bar (Placed Directly Below the Search Bar)
+       ========================================================================= -->
+  <div style="max-width: 1120px; margin: 0.75rem auto 1.6rem; padding: 0 1.25rem;">
+    <nav class="stage-tracker-bar" aria-label="Workflow progress">
+      <div class="stage-step active">
+        <span class="stage-number">1</span>
+        <span>Country</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step">
+        <span class="stage-number">2</span>
+        <span>Area Selection</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step">
+        <span class="stage-number">3</span>
+        <span>Crop Strategy</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step">
+        <span class="stage-number">4</span>
+        <span>Crop Calibration</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step">
+        <span class="stage-number">5</span>
+        <span>Constraints & Priorities</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step">
+        <span class="stage-number">6</span>
+        <span>Industrial Synthesis</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- =========================================================================
+       4. Text Feature Widgets (Moved to the Bottom below Progress Bar)
+       ========================================================================= -->
+  <section class="landing-highlights-section" style="max-width: 960px; margin: 0.5rem auto 2.5rem; padding: 0 1rem;">
+    <div class="landing-highlights-grid">
+      <div class="landing-highlight-card">
+        <div class="highlight-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="2"></circle>
+            <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path>
+          </svg>
+        </div>
+        <h3 class="highlight-title">Multispectral Observation</h3>
+        <p class="highlight-desc">High-resolution Sentinel-2 and Landsat surface reflectance indices calibrated for industrial farm parcels.</p>
+      </div>
+
+      <div class="landing-highlight-card">
+        <div class="highlight-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <h3 class="highlight-title">Unrestricted Geodesic Polygons</h3>
+        <p class="highlight-desc">Draw boundary parcels without node limits, computing real-time spherical hectares and perimeter metrics.</p>
+      </div>
+
+      <div class="landing-highlight-card">
+        <div class="highlight-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="21" x2="4" y2="14"></line>
+            <line x1="4" y1="10" x2="4" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12" y2="3"></line>
+            <line x1="20" y1="21" x2="20" y2="16"></line>
+            <line x1="20" y1="12" x2="20" y2="3"></line>
+            <line x1="1" y1="14" x2="7" y2="14"></line>
+            <line x1="9" y1="8" x2="15" y2="8"></line>
+            <line x1="17" y1="16" x2="23" y2="16"></line>
+          </svg>
+        </div>
+        <h3 class="highlight-title">Pareto Agronomic Calibration</h3>
+        <p class="highlight-desc">Calibrate trade-offs across irrigation access, equipment inventory, soil carbon, and commercial market yield.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       5. Clean Footer
+       ========================================================================= -->
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <span style="font-weight:700; color:#101828;">TERRAFORGE AGRO</span>
+        <span>•</span>
+        <span>Industrial Agronomic Decision Support System</span>
+      </div>
+      <div class="footer-links">
+        <a href="index.html" class="footer-link">Sovereign Territories</a>
+        <a href="input.html" class="footer-link">Field Demarcation</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Landing Page Logic -->
+  <script src="landing.js"></script>
+</body>
+</html>
