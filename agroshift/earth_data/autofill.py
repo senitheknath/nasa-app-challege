@@ -11,6 +11,7 @@ from typing import Any
 from ..identity.farm_records import polygon_area_hectares
 from agroshift.earth_data.providers import soil_context, terrain_context
 from agroshift.earth_data.cache import get_cached, set_cached
+from agroshift.earth_data.satellite import normalize_boundary
 
 
 def derive_field_autofill(
@@ -18,15 +19,16 @@ def derive_field_autofill(
     longitude: float,
     country: str = "LK",
     *,
-    boundary: dict | None = None,
+    boundary: Any = None,
+    area_ha: float | None = None,
     dataset: Any = None,
     offline: bool = False,
 ) -> dict[str, Any]:
     """Derive non-fabricated initial farm parameters from verified Earth observations."""
+    norm_boundary = normalize_boundary(boundary)
     cached = get_cached("field_autofill", latitude, longitude)
-    if cached and not offline and boundary is None:
+    if cached and not offline and norm_boundary is None and area_ha is None:
         return cached["data"]
-
     # 1. Soil pH (ISRIC SoilGrids 2.0 0-5 cm)
     soil_res = soil_context(latitude, longitude, offline=offline)
     ph_val = soil_res.get("value")
@@ -49,15 +51,25 @@ def derive_field_autofill(
     else:
         drainage_source = f"Copernicus DEM 90 m (elevation {elev_m} m, slope {slope_pct}%)"
 
-    # 3. Field Area (from GeoJSON polygon if present)
-    area_ha = polygon_area_hectares(boundary) if boundary else None
-    if area_ha is not None:
+    # 3. Field Area (from GeoJSON/UI polygon or explicit area_ha)
+    calc_area_ha = polygon_area_hectares(norm_boundary) if norm_boundary else None
+    if calc_area_ha is not None:
         area_item = {
-            "value": round(area_ha, 2),
-            "acres": round(area_ha * 2.47105, 2),
+            "value": round(calc_area_ha, 2),
+            "acres": round(calc_area_ha * 2.47105, 2),
             "unit": "hectares",
             "source": "Geodetic area calculated from drawn field boundary",
             "confidence": "measured_polygon",
+            "can_override": True,
+        }
+    elif area_ha is not None and float(area_ha) > 0:
+        val_ha = round(float(area_ha), 2)
+        area_item = {
+            "value": val_ha,
+            "acres": round(val_ha * 2.47105, 2),
+            "unit": "hectares",
+            "source": "User-supplied field area",
+            "confidence": "user_supplied",
             "can_override": True,
         }
     else:
@@ -69,7 +81,6 @@ def derive_field_autofill(
             "confidence": "unmeasured",
             "can_override": True,
         }
-
     # 4. Seasonal Climate & Soil Moisture Carryover (NASA POWER)
     climate_item: dict[str, Any] = {
         "seasonal_rainfall_mm": None,
@@ -119,7 +130,6 @@ def derive_field_autofill(
         },
     }
 
-    if boundary is None:
+    if norm_boundary is None and area_ha is None:
         set_cached("field_autofill", latitude, longitude, result, source="agroshift_autofill")
-
     return result
