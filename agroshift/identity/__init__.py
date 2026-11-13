@@ -1,7 +1,7 @@
 """Identity and user farm management package."""
 from __future__ import annotations
 
-from .auth import (
+from agroshift.identity.auth import (
     authenticate_or_register,
     delete_user_farm,
     get_auth_connection,

@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Sequence
 
-from ..knowledge import crop_by_id, global_traits
-from ..screening import find_options
+from agroshift.science.knowledge.knowledge import crop_by_id, global_traits
+from agroshift.science.decision.screening import find_options
 from .contracts import CropProfile, RotationConfig, RuleFinding, TransitionStatus
 from .rules import DEFAULT_RULES, TransitionRule
 

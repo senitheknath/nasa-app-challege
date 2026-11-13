@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import requests
 
-from .climate import Window, compute_daily_agromet_indices
-from .power import coordinates
+from agroshift.science.climate.climate import Window, compute_daily_agromet_indices
+from agroshift.science.climate.power import coordinates
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +540,7 @@ def simulate_crop_water_and_thermal_physics(
 def compute_uncertainty_narrowing_guide(frame: pd.DataFrame, farm, weights: dict[str, float]) -> dict[str, Any]:
     """Quantify how much each missing user input widens the top rotation's preference interval, and rank actions by Value of Information (VoI)."""
     from dataclasses import replace
-    from .decision import assess, normalized_weights
+    from agroshift.science.decision.decision import assess, normalized_weights
 
     norm_w = normalized_weights(weights)
     try:

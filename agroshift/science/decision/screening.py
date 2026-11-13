@@ -5,12 +5,19 @@ from pathlib import Path
 
 import pandas as pd
 
-from .decision import CROPS, CRITERIA, KNOWLEDGE, MIN_SEASONS, assess, verify_climate
-from .geography import pilot_scope
-from .knowledge import global_traits, screening_candidates
-from .power import DataError
+from agroshift.science.decision.decision import CROPS, CRITERIA, KNOWLEDGE, MIN_SEASONS, assess, verify_climate
+from agroshift.earth_data.geography import pilot_scope
+from agroshift.science.knowledge.knowledge import global_traits, screening_candidates
+from agroshift.science.climate.power import DataError
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 REGIONS = json.loads((ROOT / "data/regional_evidence.json").read_text(encoding="utf-8"))
 POWER_SOURCE = {"title": "NASA POWER daily weather", "url": "https://power.larc.nasa.gov/data-access-viewer/"}
 TRAIT_UNITS = {

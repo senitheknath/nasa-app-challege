@@ -11,10 +11,17 @@ import numpy as np
 import pandas as pd
 import pycountry
 
-from .climate import mean_daylength_hours
-from .power import PARAMETERS, Dataset, coordinates
+from agroshift.science.climate.climate import mean_daylength_hours
+from agroshift.science.climate.power import PARAMETERS, Dataset, coordinates
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 EARTH_GRID_PATH = ROOT / "data" / "global_earth_grid_atlas.csv"
 COUNTRIES_ATLAS_PATH = ROOT / "data" / "global_countries_agro_atlas.csv"
 NASA_STATIONS_SUMMARY_PATH = ROOT / "data" / "global_nasa_stations_summary.csv"

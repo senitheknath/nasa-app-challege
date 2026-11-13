@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 import html
 import json
 import math
-from .climate import seasonal_summary, season_samples
-from .decision import KNOWLEDGE, normalized_weights, verify_climate, capability
+from agroshift.science.climate.climate import seasonal_summary, season_samples
+from agroshift.science.decision.decision import KNOWLEDGE, normalized_weights, verify_climate, capability
 
 LIMITATIONS = [
     "Reference-informed prototype, not agronomically calibrated or field-validated.",

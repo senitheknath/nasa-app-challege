@@ -6,9 +6,9 @@ import json
 import math
 import time
 import uuid
-from .farm_records import validate_profile
-from .knowledge_store import postgres_connect
-from .power import DataError
+from agroshift.identity.farm_records import validate_profile
+from agroshift.science.knowledge.knowledge_store import postgres_connect
+from agroshift.science.climate.power import DataError
 
 OWNER_NAMESPACE = uuid.UUID("bb33730d-f65f-48e5-a238-d853d88e1593")
 

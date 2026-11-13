@@ -1,7 +1,7 @@
 """Agricultural decision support, first-season screening, and multi-criteria evaluation package."""
 from __future__ import annotations
 
-from ...decision import (
+from agroshift.science.decision.decision import (
     CRITERIA,
     CROPS,
     KNOWLEDGE,
@@ -17,12 +17,11 @@ from ...decision import (
     unknown,
     verify_climate,
 )
-from ...evidence_combination import (
+from agroshift.science.decision.evidence_combination import (
     CLASSIFICATION_LABELS,
     build_evidence_layers,
-    classify_evidence_layers,
 )
-from ...screening import (
+from agroshift.science.decision.screening import (
     POWER_SOURCE,
     REGIONS,
     STATUS_ORDER,
@@ -46,7 +45,6 @@ __all__ = [
     "assess",
     "build_evidence_layers",
     "capability",
-    "classify_evidence_layers",
     "component",
     "crop_components",
     "find_options",

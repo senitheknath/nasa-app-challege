@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .water_balance import compute_fao56_penman_monteith_daily
+from agroshift.science.soil_water.water_balance import compute_fao56_penman_monteith_daily
 
 
 AQUACROP_CROP_DEFAULTS: dict[str, dict] = {

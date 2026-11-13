@@ -261,7 +261,15 @@ def load_snapshot(path):
 
 def archived_history(query, mode="verified archive after NASA outage"):
     """Return an exact, hash-checked distributed snapshot or None."""
-    root = Path(__file__).resolve().parents[1] / "data"
+    _curr = Path(__file__).resolve()
+    while _curr != _curr.parent:
+        if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+            ROOT = _curr
+            break
+        _curr = _curr.parent
+    else:
+        ROOT = Path(__file__).resolve().parents[3]
+    root = ROOT / "data"
     manifest = root / "global_nasa_stations_summary.csv"
     if not manifest.exists():
         return None

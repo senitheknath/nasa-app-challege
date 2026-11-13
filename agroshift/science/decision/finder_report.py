@@ -4,13 +4,13 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from html import escape
 import json
-from .decision import verify_climate
+from agroshift.science.decision.decision import verify_climate
 
 
 def make_record(dataset, farm, cards, weights, context=None):
     verify_climate(dataset.frame, farm)
-    from .farm_context import capabilities
-    from .knowledge import knowledge_status
+    from agroshift.earth_data.farm_context import capabilities
+    from agroshift.science.knowledge.knowledge import knowledge_status
 
     return dict(
         capabilities=capabilities(farm, dataset, cards),

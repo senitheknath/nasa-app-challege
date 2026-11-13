@@ -13,10 +13,18 @@ import re
 from PIL import Image
 import pycountry
 
-from .power import DataError, coordinates
-from .provider_http import reference
+from agroshift.science.climate.power import DataError, coordinates
+from agroshift.earth_data.provider_http import reference
 
-DATA = Path(__file__).resolve().parent.parent / "data"
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
 AGROVOC = "https://agrovoc.fao.org/browse/rest/v1/search/"
 CALENDAR = "https://api-cropcalendar.apps.fao.org/api/v1/countries"
 SOIL = "https://maps.isric.org/mapserv"
@@ -375,7 +383,7 @@ def soil_profile_wcs(
     record: bool = False,
 ) -> dict:
     """Retrieve multi-property, multi-depth ISRIC SoilGrids 2.0 WCS layers with uncertainty and pedological interpretation."""
-    from .soil import SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTIES, interpret_soil_profile, normalize_soilgrids_value
+    from agroshift.science.soil_water.soil import SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTIES, interpret_soil_profile, normalize_soilgrids_value
 
     coordinates(latitude, longitude)
     lat, lon = float(latitude), float(longitude)
@@ -503,7 +511,7 @@ def usda_sda_soil(latitude: float, longitude: float, country_code: str = "US", *
     lat, lon = float(latitude), float(longitude)
     # Check bundled/archived benchmark observations first when offline
     if offline:
-        from .knowledge import soil_observations
+        from agroshift.science.knowledge.knowledge import soil_observations
 
         obs = [
             o
@@ -631,7 +639,7 @@ def wosis_profiles(latitude: float, longitude: float, radius_deg: float = 0.5, *
         source="https://www.isric.org/explore/wosis",
     )
     if res["status"] != "verified" and offline:
-        from .knowledge import soil_observations
+        from agroshift.science.knowledge.knowledge import soil_observations
 
         nearby = [
             o

@@ -5,9 +5,9 @@ import copy
 from functools import lru_cache
 import os
 import time
-from . import providers
-from .power import coordinates
-from .screening import region_evidence
+from agroshift.earth_data import providers
+from agroshift.science.climate.power import coordinates
+from agroshift.science.decision.screening import region_evidence
 
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="farm-context")
 
@@ -65,7 +65,7 @@ def location_context(country, latitude, longitude, *, offline=False):
 
 
 def capabilities(farm, dataset, cards):
-    from .geography import pilot_scope
+    from agroshift.earth_data.geography import pilot_scope
 
     environmental = (
         dataset is not None

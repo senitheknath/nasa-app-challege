@@ -15,7 +15,14 @@ import unicodedata
 from urllib.parse import urlsplit
 import uuid
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "db/migrations"
 REGION = "lk_lowland_dry_intermediate"
 UNITS = {"temperature_c": "°C", "water_mm": "mm/season", "ph_preferred": "pH", "duration_days": "days"}

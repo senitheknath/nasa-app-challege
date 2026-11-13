@@ -1,8 +1,8 @@
 """Six-layer scientifically defensible evidence combination without double-counting correlated models."""
 from __future__ import annotations
 
-from .providers import GAEZ_CROP_ID_MAP, gaez_point
-from .soil import reconcile_soil_evidence
+from agroshift.earth_data.providers import GAEZ_CROP_ID_MAP, gaez_point
+from agroshift.science.soil_water.soil import reconcile_soil_evidence
 
 
 CLASSIFICATION_LABELS = {

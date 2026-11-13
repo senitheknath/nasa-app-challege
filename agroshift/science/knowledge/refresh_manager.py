@@ -7,9 +7,16 @@ import hashlib
 import json
 from pathlib import Path
 
-from .knowledge import knowledge_status, refresh_policies
+from agroshift.science.knowledge.knowledge import knowledge_status, refresh_policies
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 
 

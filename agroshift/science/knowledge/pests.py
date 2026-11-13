@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .knowledge import pest_context
+from agroshift.science.knowledge.knowledge import pest_context
 
 
 def evaluate_crop_pest_context(

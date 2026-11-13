@@ -1,8 +1,8 @@
 """Earth observation, spatial caching, and field telemetry package."""
 from __future__ import annotations
 
-from .autofill import derive_field_autofill
-from .cache import (
+from agroshift.earth_data.autofill import derive_field_autofill
+from agroshift.earth_data.cache import (
     DEFAULT_DB_PATH,
     cell_key,
     get_cached,
@@ -10,7 +10,7 @@ from .cache import (
     list_cached_types,
     set_cached,
 )
-from .satellite import fetch_satellite_overpasses, get_active_monitoring_layers
+from agroshift.earth_data.satellite import fetch_satellite_overpasses, get_active_monitoring_layers
 
 __all__ = [
     "DEFAULT_DB_PATH",

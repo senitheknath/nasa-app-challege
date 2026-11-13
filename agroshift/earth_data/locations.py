@@ -7,7 +7,7 @@ import gzip
 import json
 from pathlib import Path
 
-from .power import (
+from agroshift.science.climate.power import (
     DataError,
     PowerClient,
     PARAMETERS,
@@ -16,7 +16,15 @@ from .power import (
     request_parameters,
 )
 
-DATA = Path(__file__).resolve().parents[1] / "data"
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
 
 
 @lru_cache(maxsize=1)
