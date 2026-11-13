@@ -41,12 +41,16 @@ from agroshift.evidence_combination import build_evidence_layers
 from agroshift.farm_context import capabilities, location_context
 from agroshift.finder_report import make_record, readable
 from agroshift.earth_data import (
+    DEFAULT_DB_PATH,
     derive_field_autofill,
     fetch_satellite_overpasses,
     get_active_monitoring_layers,
+    get_connection,
+    set_cached,
 )
 from agroshift.geography import pilot_scope, search_places
 from agroshift.knowledge import (
+    clear_cache,
     count_crops,
     crop_by_id,
     crop_categories,
@@ -273,6 +277,7 @@ async def site(request: Request) -> Response:
         offline = bool(payload.get("offline", False))
         refresh = bool(payload.get("refresh", False))
         boundary = payload.get("boundary")
+        include_rotations = bool(payload.get("include_rotations", False))
 
         def _run():
             ds = _get_dataset(latitude, longitude, refresh=refresh)
@@ -288,7 +293,28 @@ async def site(request: Request) -> Response:
             sat_overpasses = fetch_satellite_overpasses(
                 latitude, longitude, boundary=boundary, offline=offline
             )
-            return {
+
+            preview_rotations = []
+            if include_rotations:
+                if suggested and "start_month" in suggested and "end_month" in suggested:
+                    w1 = Window(int(suggested["start_month"]), int(suggested.get("start_day", 1)), int(suggested["end_month"]), int(suggested.get("end_day", 28)))
+                else:
+                    w1 = Window(10, 1, 1, 20)
+                s2_m = (w1.end_month % 12) + 1
+                e2_m = ((s2_m + 3) % 12) + 1
+                w2 = Window(s2_m, 1, e2_m, 28)
+                preview_farm = Farm(
+                    country=country,
+                    latitude=latitude,
+                    longitude=longitude,
+                    windows=(w1, w2),
+                    ph=autofill_data.get("autofill", {}).get("ph", {}).get("value"),
+                    drainage=autofill_data.get("autofill", {}).get("drainage", {}).get("value") or "well_drained",
+                    irrigation="rainfed",
+                )
+                preview_rotations = plan_global_rotations(preview_farm, ds, max_sequences=5)
+
+            res = {
                 "location": {
                     "country": country,
                     "latitude": latitude,
@@ -309,6 +335,9 @@ async def site(request: Request) -> Response:
                     "overpass_schedule": sat_overpasses,
                 },
             }
+            if include_rotations:
+                res["rotations"] = preview_rotations
+            return res
 
         return _json(await run_in_threadpool(_run))
     except (DataError, ValueError, KeyError, TypeError) as exc:
@@ -443,23 +472,15 @@ async def rotations(request: Request) -> Response:
     try:
         payload = await request.json()
         farm = _parse_farm(payload)
-        weights = _parse_weights(payload.get("weights"))
+        max_sequences = int(payload.get("max_sequences", 16))
 
         def _run():
             ds = _get_dataset(farm.latitude, farm.longitude)
-            if pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed):
-                rows = assess(ds.frame, farm, weights)
-                sens = priority_sensitivity(rows, weights)
-                return {
-                    "mode": "regional",
-                    "rows": rows,
-                    "sensitivity": sens,
-                }
-            plans = plan_global_rotations(farm, ds)
+            plans = plan_global_rotations(farm, ds, max_sequences=max_sequences)
             return {
-                "mode": "global",
-                "rows": plans,
-                "sensitivity": [],
+                "status": "success",
+                "total": len(plans),
+                "rotations": plans,
             }
 
         return _json(await run_in_threadpool(_run))
@@ -512,6 +533,153 @@ async def report(request: Request) -> Response:
         return _json(result)
     except (DataError, ValueError, KeyError, TypeError) as exc:
         return _json({"error": str(exc)}, status_code=400)
+async def cache_status(request: Request) -> Response:
+    """Inspect spatial GeoCache, memory climate cache, and knowledge database status."""
+    try:
+        def _run():
+            geo_stats = {}
+            db_size_kb = 0
+            total_cells = 0
+            if DEFAULT_DB_PATH.exists():
+                db_size_kb = round(DEFAULT_DB_PATH.stat().st_size / 1024, 1)
+                with get_connection() as conn:
+                    rows = conn.execute(
+                        "SELECT data_type, count(*) as count FROM geo_cache GROUP BY data_type"
+                    ).fetchall()
+                    for r in rows:
+                        geo_stats[r["data_type"]] = r["count"]
+                    row = conn.execute("SELECT count(*) FROM geo_cache").fetchone()
+                    total_cells = row[0] if row else 0
+
+            with _DATASET_LOCK:
+                mem_climate_cells = len(_DATASET_CACHE)
+                cached_coords = list(_DATASET_CACHE.keys())
+
+            k_status = knowledge_status()
+            total_crops_num = count_crops()
+
+            return {
+                "status": "active",
+                "geocache": {
+                    "db_path": str(DEFAULT_DB_PATH),
+                    "db_size_kb": db_size_kb,
+                    "total_entries": total_cells,
+                    "by_type": geo_stats,
+                },
+                "memory_climate_cache": {
+                    "total_cells": mem_climate_cells,
+                    "cached_coords": cached_coords,
+                },
+                "knowledge_db": {
+                    "backend": k_status.get("backend"),
+                    "total_crops": total_crops_num,
+                    "versions": k_status.get("versions"),
+                },
+            }
+
+        return _json(await run_in_threadpool(_run))
+    except Exception as exc:
+        return _json({"error": str(exc)}, status_code=500)
+
+
+async def cache_clear(request: Request) -> Response:
+    """Clear memory climate datasets, SQLite GeoCache records, or knowledge LRU caches."""
+    try:
+        payload = {}
+        try:
+            payload = await request.json()
+        except Exception:
+            pass
+        scope = str(payload.get("scope", "all")).lower()
+
+        def _run():
+            cleared = []
+            if scope in ("all", "climate"):
+                with _DATASET_LOCK:
+                    count = len(_DATASET_CACHE)
+                    _DATASET_CACHE.clear()
+                    cleared.append(f"climate_memory ({count} cells)")
+
+            if scope in ("all", "knowledge"):
+                clear_cache()
+                cleared.append("knowledge_lru_cache")
+
+            if scope in ("all", "geocache"):
+                target_type = payload.get("data_type")
+                if DEFAULT_DB_PATH.exists():
+                    with get_connection() as conn:
+                        with conn:
+                            if target_type:
+                                res = conn.execute(
+                                    "DELETE FROM geo_cache WHERE data_type = ?", (target_type,)
+                                )
+                                cleared.append(f"geocache:{target_type} ({res.rowcount} rows)")
+                            else:
+                                res = conn.execute("DELETE FROM geo_cache")
+                                cleared.append(f"geocache:all ({res.rowcount} rows)")
+
+            return {"status": "cleared", "scopes": cleared}
+
+        return _json(await run_in_threadpool(_run))
+    except Exception as exc:
+        return _json({"error": str(exc)}, status_code=500)
+
+
+async def cache_update(request: Request) -> Response:
+    """Manually update or seed a spatial GeoCache observation (soil, DEM, overpass)."""
+    try:
+        payload = await request.json()
+        data_type = str(payload["data_type"])
+        latitude = float(payload["latitude"])
+        longitude = float(payload["longitude"])
+        data = payload.get("payload") or {}
+        source = str(payload.get("source", "manual_api_update"))
+        precision = int(payload.get("precision", 3))
+
+        def _run():
+            set_cached(
+                data_type,
+                latitude,
+                longitude,
+                data,
+                source=source,
+                precision=precision,
+            )
+            return {
+                "status": "updated",
+                "data_type": data_type,
+                "cell": [round(latitude, precision), round(longitude, precision)],
+                "source": source,
+            }
+
+        return _json(await run_in_threadpool(_run))
+    except (KeyError, ValueError, TypeError) as exc:
+        return _json({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return _json({"error": str(exc)}, status_code=500)
+
+
+async def knowledge_categories_endpoint(request: Request) -> Response:
+    """Fetch all reviewed crop categories from the active knowledge database."""
+    try:
+        cats = await run_in_threadpool(crop_categories)
+        return _json({"categories": cats})
+    except Exception as exc:
+        return _json({"error": str(exc)}, status_code=500)
+
+
+async def knowledge_status_endpoint(request: Request) -> Response:
+    """Fetch versioning, backend, and metadata about the 107-crop knowledge atlas."""
+    try:
+        def _run():
+            info = knowledge_status()
+            info["total_crops"] = count_crops()
+            return info
+
+        return _json(await run_in_threadpool(_run))
+    except Exception as exc:
+        return _json({"error": str(exc)}, status_code=500)
+
 
 
 def _get_auth_user(request: Request) -> dict[str, Any]:
@@ -600,6 +768,11 @@ app = Starlette(
         Route("/api/rotations", rotations, methods=["POST"]),
         Route("/api/crops", crops_catalogue, methods=["GET"]),
         Route("/api/report", report, methods=["POST"]),
+        Route("/api/cache/status", cache_status, methods=["GET"]),
+        Route("/api/cache/clear", cache_clear, methods=["POST"]),
+        Route("/api/cache/update", cache_update, methods=["POST"]),
+        Route("/api/knowledge/status", knowledge_status_endpoint, methods=["GET"]),
+        Route("/api/knowledge/categories", knowledge_categories_endpoint, methods=["GET"]),
         Route("/api/auth/login", auth_login, methods=["POST"]),
         Route("/api/auth/register", auth_login, methods=["POST"]),
         Route("/api/auth/me", auth_me, methods=["GET"]),
