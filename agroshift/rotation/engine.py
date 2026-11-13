@@ -106,6 +106,80 @@ def select_candidate_pool(
         return viable[:limit]
     return list(cards_s1)[:8]
 
+def rate_rotation_sequence(
+    s1_card: dict[str, Any],
+    s2_card: dict[str, Any],
+    transition: dict[str, Any],
+    timeline: dict[str, Any],
+) -> dict[str, Any]:
+    """Compute a multi-criteria agronomic score (0-100) and rating tier for a rotation."""
+    def _card_pts(card: dict[str, Any]) -> float:
+        st = card.get("status")
+        if st == "possible":
+            return 20.0
+        if st == "check":
+            return 12.0
+        if st == "outside":
+            return 5.0
+        return 0.0
+
+    climate_pts = _card_pts(s1_card) + _card_pts(s2_card)
+
+    trans_status = transition.get("status", "conditional")
+    if trans_status == "blocked":
+        trans_pts = 0.0
+    else:
+        trans_pts = 15.0
+        findings = transition.get("findings", [])
+        for f in findings:
+            sev = f.get("severity")
+            if sev == "benefit":
+                trans_pts += 6.0
+            elif sev == "caution":
+                trans_pts -= 7.0
+            elif sev == "blocker":
+                trans_pts -= 15.0
+        trans_pts = max(0.0, min(35.0, trans_pts))
+
+    tb = timeline.get("turnaround_summary", {})
+    buf_status = tb.get("status")
+    if buf_status == "optimal":
+        time_pts = 20.0
+    elif buf_status == "acceptable":
+        time_pts = 16.0
+    elif buf_status == "tight":
+        time_pts = 6.0
+    elif buf_status == "excessive_fallow":
+        time_pts = 10.0
+    elif buf_status == "collision":
+        time_pts = 0.0
+    else:
+        time_pts = 14.0
+
+    slots = timeline.get("slots", [])
+    slack_bonus = sum(2.5 for s in slots if s.get("delay_slack_days", 0) > 0)
+    time_pts = max(0.0, min(25.0, time_pts + slack_bonus))
+
+    total = round(climate_pts + trans_pts + time_pts, 1)
+    if total >= 80.0:
+        tier = "Excellent"
+    elif total >= 65.0:
+        tier = "Good"
+    elif total >= 48.0:
+        tier = "Moderate"
+    else:
+        tier = "Restricted"
+
+    return {
+        "score": total,
+        "rating": tier,
+        "components": {
+            "climate_suitability": round(climate_pts, 1),
+            "transition_synergy": round(trans_pts, 1),
+            "timeline_efficiency": round(time_pts, 1),
+        },
+    }
+
 
 def plan_global_rotations(
     farm: Any,
@@ -214,11 +288,16 @@ def plan_global_rotations(
             trajs = solve_trajectories([[act1], [act2]], _arc_eval)
             timeline_data = build_physical_timeline(trajs[0]) if trajs else {}
 
+            rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
+
             sequences.append(
                 {
                     "id": f"{c1_id}_then_{c2_id}",
                     "name": f"{p1.name} → {p2.name}",
                     "overall_status": overall_status,
+                    "score": rating_info["score"],
+                    "rating": rating_info["rating"],
+                    "components": rating_info["components"],
                     "summary": trans["summary"],
                     "season_1": {
                         "window": w1.label,
@@ -244,5 +323,14 @@ def plan_global_rotations(
             )
 
     order_map = {"complementary": 0, "conditional": 1, "caution": 2, "outside": 3, "blocked": 4}
-    sequences.sort(key=lambda r: (order_map.get(r["overall_status"], 9), r["name"].casefold()))
+    sequences.sort(
+        key=lambda r: (
+            order_map.get(r["overall_status"], 9),
+            -r["score"],
+            r["name"].casefold(),
+        )
+    )
+    for idx, seq in enumerate(sequences, start=1):
+        seq["rank"] = idx
+
     return sequences[:max_sequences]
