@@ -4,7 +4,7 @@ Modular architecture:
 - agroshift.earth_data: Satellite imagery, spatial cache, field auto-fill, geospatial providers.
 - agroshift.identity: User accounts, authentication, saved multi-farm persistence, boundaries.
 - agroshift.rotation: Modular crop rotation engine, contracts, and decoupled agronomic rules.
-- agroshift.science: Pure scientific engines grouped into climate, soil_water, knowledge, decision, and ml_lab.
+- agroshift.science: Pure scientific engines grouped into climate, soil_water, knowledge, and decision.
 """
 from __future__ import annotations
 
@@ -33,11 +33,6 @@ _LEGACY_MODULE_MAP = {
     "evidence_combination": "agroshift.science.decision.evidence_combination",
     "finder_report": "agroshift.science.decision.finder_report",
     "reporting": "agroshift.science.decision.reporting",
-    "ml_engine": "agroshift.science.ml_lab.ml_engine",
-    "educational_traits": "agroshift.science.ml_lab.educational_traits",
-    "global_atlas": "agroshift.science.ml_lab.global_atlas",
-    "validation": "agroshift.science.ml_lab.validation",
-    "assistant": "agroshift.science.ml_lab.assistant",
     "geography": "agroshift.earth_data.geography",
     "locations": "agroshift.earth_data.locations",
     "farm_context": "agroshift.earth_data.farm_context",

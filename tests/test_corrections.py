@@ -9,13 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 import requests
-from streamlit.testing.v1 import AppTest
 
-from agroshift.assistant import assess_global_rotations, eligible_crops_and_rotations, query_optional_gemini
 from agroshift.climate import Window, aggregate, compute_daily_agromet_indices, season_samples
 from agroshift.decision import CRITERIA, CROPS, Farm, assess, priority_sensitivity
-from agroshift.global_atlas import simulate_climate
-from agroshift.ml_engine import forecast_seasonal_climate_timeseries
 from agroshift.power import DataError, PowerClient, load_snapshot, unpack
 from agroshift.reporting import report_json
 
@@ -25,16 +21,6 @@ WEIGHTS = dict.fromkeys(CRITERIA,25)
 def observed():
     return load_snapshot("data/demo_power.json")
 
-
-def test_simulation_cannot_enter_any_farm_result():
-    sim = simulate_climate(8.3114,80.4037)
-    farm = Farm(pilot_confirmed=True)
-    assert sim.provenance["data_kind"] == "SIMULATED"
-    for action in (lambda:assess(sim.frame,farm,WEIGHTS),
-                   lambda:eligible_crops_and_rotations(sim,farm,WEIGHTS),
-                   lambda:report_json(sim,farm,WEIGHTS,[])):
-        with pytest.raises(DataError,match="verified NASA"):
-            action()
 
 
 def test_reject_mismatched_location_or_period_even_with_valid_payload_hash(observed):
@@ -87,31 +73,8 @@ def test_missing_water_stays_unknown_even_with_reliable_irrigation(observed):
     results=assess(observed.frame,farm,WEIGHTS)
     assert farm.ph is None and farm.irrigation_mm is None
     assert all(r["components"]["water"]["low"]==0 and r["components"]["water"]["high"]==1 for r in results)
-    assert results == assess_global_rotations(observed.frame, farm, WEIGHTS)
     assert set(CRITERIA)=={row["Criterion"] for row in priority_sensitivity(results,WEIGHTS)}
     assert not any(r["ordering_resolved"] for r in results)
 
-
-def test_backtest_predictions_precede_outcomes(observed):
-    samples=season_samples(observed.frame,Farm().windows[0])
-    base=forecast_seasonal_climate_timeseries(samples)
-    samples.loc[samples.index[-1],"rainfall_mm"]+=10000
-    changed=forecast_seasonal_climate_timeseries(samples)
-    assert base["series"][-1]["predicted_rain_mm"]==changed["series"][-1]["predicted_rain_mm"]
-    assert changed["test_mae_rain_mm"]>base["test_mae_rain_mm"]
-    assert "forecast_rainfall_mm" not in base
-
-
-def test_optional_model_cannot_inject_an_agricultural_claim():
-    brief=dict(period="20010101–20251231",provenance_mode="cache",total_candidates=25,
-               blocked_candidates=0,farm_inputs={"irrigation":"unknown"})
-    session=Mock()
-    def output(ids):
-        return {"candidates":[{"content":{"parts":[{"text":json.dumps(ids)}]}}]}
-    session.post.return_value.json.return_value=output(["coverage"])
-    assert "25 sequences" in query_optional_gemini("Summary",brief,"test",session)
-    session.post.return_value.json.return_value=output(["Guaranteed yield of 20 tons"])
-    with pytest.raises(DataError):
-        query_optional_gemini("Summary",brief,"test",session)
 
 

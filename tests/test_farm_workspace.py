@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import asdict
 import json
 import pytest
-from agroshift.assistant import DEMO_SCENARIOS
+from agroshift.presets import DEMO_SCENARIOS
 from agroshift.farm_records import (
     profile,
     read_profile,
