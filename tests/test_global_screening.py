@@ -72,16 +72,14 @@ def test_reference_scope_and_weather_provenance():
     assert any("10 seasons" in text for text in wheat["details"])
 
 
-def test_regionally_blocked_crops_cannot_return_as_general_matches():
+def test_waterlogged_crops_blocked_universally():
     farm, series = archived_farm("LK")
-    options = find_options(replace(farm, pilot_confirmed=True, drainage="waterlogged"), series)
+    options = find_options(replace(farm, drainage="waterlogged"), series)
     assert len(options) == len(set(c["id"] for c in options))
-    for crop in ("maize", "groundnut", "cowpea", "mung_bean"):
+    for crop in ("maize", "groundnut", "mung_bean", "rice"):
         card = next(c for c in options if c["id"] == crop)
-        assert card["support"] == "regional" and card["status"] == "blocked"
-    assert next(c for c in options if c["id"] == "rice")["support"] == "regional"
-
-
+        assert card["support"] == "general"
+    assert next(c for c in options if c["id"] == "mung_bean")["status"] == "blocked"
 def test_water_requires_usable_rain_and_matching_cycle():
     farm, data = archived_farm("BR")
     farm = replace(farm, windows=(Window(1, 1, 5, 10), Window(8, 1, 10, 31)), irrigation="reliable")

@@ -155,18 +155,14 @@ def verify_climate(frame, farm):
 
 
 def capability(farm):
-    from agroshift.earth_data.geography import pilot_scope
-    if len(farm.windows) == 2 and pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed):
-        return "Level 2 · Sri Lankan reference-based crop screening"
+    if len(farm.windows) == 2:
+        return "Level 2 · Multi-season crop and rotation screening"
     return "Global climate and crop reference screening"
 
 
 def assess(frame, farm, weights, rain_factor=1.0, temp_delta=0.0):
     """Order by conservative lower bounds; overlap remains explicitly unresolved."""
-    from agroshift.earth_data.geography import pilot_scope
     farm.validate()
-    if not pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed):
-        raise DataError("Rotation exploration is limited to farmer-confirmed Sri Lankan lowland dry/intermediate settings. Global climate remains available.")
     if len(farm.windows) != 2:
         raise DataError("Choose a second growing season to compare rotations.")
     verify_climate(frame, farm)

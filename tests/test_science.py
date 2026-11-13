@@ -102,10 +102,6 @@ def test_insufficient_history(data,farm):
     with pytest.raises(DataError,match="ten complete"):
         assess(data.frame.loc["2024":],farm,WEIGHTS)
 
-def test_global_scope_not_sri_lanka(data,farm):
-    with pytest.raises(DataError,match="limited"):
-        assess(data.frame,replace(farm,latitude=-1.29,longitude=36.82,country="KE"),WEIGHTS)
-
 def test_overlapping_seasons_rejected(farm):
     with pytest.raises(DataError,match="overlap"):
         replace(farm,windows=(Window(11,1,2,28),Window(1,1,4,1))).validate()
@@ -168,8 +164,6 @@ def test_global_climate_evidence_nairobi_and_ames(data, farm):
         query = request_parameters(lat, lon, date(2025, 1, 1), date(2025, 1, 7))
         frame, issues = parse_payload(payload, query)
         assert len(frame) == 7 and not issues
-        with pytest.raises(DataError, match="limited"):
-            assess(data.frame, replace(farm, latitude=lat, longitude=lon, country=cc), WEIGHTS)
 
 def test_anomaly_classification_and_demo_presets(data, farm):
     from agroshift.presets import DEMO_SCENARIOS

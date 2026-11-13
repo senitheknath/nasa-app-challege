@@ -41,8 +41,6 @@ def test_outage_uses_verified_distributed_archive_only(tmp_path):
     assert data.provenance["sha256"]==row.sha256
     assert data.provenance["data_kind"]=="VERIFIED_CACHE" and not data.provenance["simulated"]
     assert aggregate(data.frame,"YS").rainfall_mm.count()>0
-    with pytest.raises(DataError,match="limited"):
-        assess(data.frame,Farm(country="KE",latitude=row.latitude,longitude=row.longitude),WEIGHTS)
     with pytest.raises(DataError,match="connection failed"):
         client.fetch(row.latitude+.01,row.longitude,date(2001,1,1),date(2025,12,31))
 
