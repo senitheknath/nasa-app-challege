@@ -13,7 +13,7 @@ from typing import Any
 import urllib.parse
 import urllib.request
 
-from .cache import get_cached, set_cached
+from agroshift.earth_data.cache import get_cached, set_cached
 
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
 GIBS_WMTS_BASE = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"

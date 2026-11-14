@@ -13,9 +13,17 @@ from urllib.parse import urlsplit
 
 import requests
 
-from .power import DataError
+from agroshift.science.climate.power import DataError
 
-ARCHIVES = Path(__file__).resolve().parent.parent / "data" / "provider_samples"
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
+ARCHIVES = ROOT / "data" / "provider_samples"
 MAX_BYTES = 1_000_000
 _cache = OrderedDict()
 _locks = [threading.Lock() for _ in range(53)]

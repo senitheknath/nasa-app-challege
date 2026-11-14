@@ -3,9 +3,9 @@ import json
 import os
 import requests
 
-from .climate import Window, classify_anomalies, season_samples, seasonal_summary
-from .decision import CROPS, KNOWLEDGE, Farm, assess, normalized_weights
-from .power import DataError
+from agroshift.science.climate.climate import Window, classify_anomalies, season_samples, seasonal_summary
+from agroshift.science.decision.decision import CROPS, KNOWLEDGE, Farm, assess, normalized_weights
+from agroshift.science.climate.power import DataError
 
 GLOBAL_SOURCES = KNOWLEDGE["sources"]
 
@@ -418,7 +418,7 @@ def eligible_crops_and_rotations(dataset, farm, weights):
 
 def build_grounding_brief(dataset, farm: Farm, weights: dict, results: list) -> dict:
     """Assemble a strictly verified dictionary of climate, rotation, and reference facts."""
-    from .decision import verify_climate
+    from agroshift.science.decision.decision import verify_climate
     verify_climate(dataset.frame, farm)
     window_summaries = []
     for idx, w in enumerate(farm.windows):
@@ -489,7 +489,7 @@ def answer_farmer_question(
     brief = build_grounding_brief(dataset, farm, weights, results)
     if cards is None:
         try:
-            from .screening import find_options
+            from agroshift.science.decision.screening import find_options
 
             cards = find_options(dataset, farm)
         except Exception:
@@ -507,7 +507,7 @@ def answer_farmer_question(
     add_citation("NASA POWER Daily Agroclimatology API", "https://power.larc.nasa.gov/docs/services/api/temporal/daily/")
     add_citation("Climdex Consecutive Dry Days (CDD) Index", "https://www.climdex.org/learn/indices/")
 
-    from .soil_and_water import fetch_soil_profile
+    from agroshift.science.soil_water.soil_and_water import fetch_soil_profile
 
     soil_prior = fetch_soil_profile(farm.latitude, farm.longitude, allow_network=False)
     possible_cards = [c for c in (cards or []) if c.get("status") == "possible"]
@@ -679,7 +679,7 @@ def answer_farmer_question(
                 lines.append("### Uncertainty & Missing Information\n" + "\n".join(f"- {item}" for item in missing_items))
 
         if any(w in q for w in ("narrow", "improve", "soil", "water", "drought", "heat", "stress", "root", "fao")):
-            from .soil_and_water import compute_uncertainty_narrowing_guide, simulate_crop_water_and_thermal_physics
+            from agroshift.science.soil_water.soil_and_water import compute_uncertainty_narrowing_guide, simulate_crop_water_and_thermal_physics
             voi = compute_uncertainty_narrowing_guide(dataset.frame, farm, weights)
             if voi.get("available") and voi.get("actions"):
                 top_act = voi["actions"][0]
@@ -723,7 +723,7 @@ def answer_farmer_question(
 def run_counterfactual_copilot(scenario_key: str, dataset, farm: Farm, weights: dict) -> dict:
     """Execute a verified counterfactual simulation against decision.assess() and summarize rank & interval shifts."""
     from dataclasses import replace
-    from .soil_and_water import fetch_soil_profile
+    from agroshift.science.soil_water.soil_and_water import fetch_soil_profile
 
     base_results = assess(dataset.frame, farm, weights)
     base_lead = next((r for r in base_results if not r["constraints"]), base_results[0])

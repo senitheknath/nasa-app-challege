@@ -9,14 +9,21 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .climate import Window
-from .decision import Farm
-from .evidence_combination import build_evidence_layers
-from .power import archived_history, request_parameters
-from .providers import GAEZ_CROP_ID_MAP, gaez_point, match_crop_calendar, soil_context
-from .screening import find_options
+from agroshift.science.climate.climate import Window
+from agroshift.science.decision.decision import Farm
+from agroshift.science.decision.evidence_combination import build_evidence_layers
+from agroshift.science.climate.power import archived_history, request_parameters
+from agroshift.earth_data.providers import GAEZ_CROP_ID_MAP, gaez_point, match_crop_calendar, soil_context
+from agroshift.science.decision.screening import find_options
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_station_manifest() -> list[dict]:

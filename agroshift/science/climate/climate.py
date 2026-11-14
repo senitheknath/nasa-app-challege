@@ -4,7 +4,7 @@ from datetime import date
 import math
 import numpy as np
 import pandas as pd
-from .power import DataError
+from agroshift.science.climate.power import DataError
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ def compute_daily_agromet_indices(part: pd.DataFrame) -> dict:
         if pd.notna(et0_total):
             et0_method = "fao56_hargreaves"
         if ("WS2M" in part or "WS10M" in part) and len(part):
-            from .water_balance import compute_fao56_penman_monteith_daily
+            from agroshift.science.soil_water.water_balance import compute_fao56_penman_monteith_daily
             pm_df = compute_fao56_penman_monteith_daily(part, latitude=latitude)
             if pm_df["et0_pm_mm"].notna().all():
                 et0_pm_total = float(pm_df["et0_pm_mm"].sum())

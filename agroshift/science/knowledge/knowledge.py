@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 
-from .knowledge_store import (
+from agroshift.science.knowledge.knowledge_store import (
     migrate,
     is_postgres,
     postgres_connect,

@@ -10,7 +10,14 @@ import sqlite3
 import threading
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = ROOT / "data" / "users.db"
 _AUTH_LOCK = threading.Lock()
 _SALT = "agroshift_demo_salt_2026"

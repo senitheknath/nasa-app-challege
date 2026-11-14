@@ -1,20 +1,18 @@
 """Soil properties, FAO-56 crop water balance, and AquaCrop simulation package."""
 from __future__ import annotations
 
-from ...aquacrop_prototype import (
-    AquaCropSimulationResult,
+from agroshift.science.soil_water.aquacrop_prototype import (
     run_aquacrop_water_driven_prototype,
 )
-from ...soil import (
+from agroshift.science.soil_water.soil import (
     classify_usda_texture,
     interpret_soil_profile,
     normalize_soilgrids_value,
     reconcile_soil_evidence,
 )
-from ...soil_and_water import (
+from agroshift.science.soil_water.soil_and_water import (
     IRRIGATION_SCHEDULE_PRESETS,
     LANDFORM_PRESETS,
-    SOIL_PROFILE_PRESETS,
     compute_general_screening_voi_guide,
     compute_scs_usable_rain_fraction,
     compute_uncertainty_narrowing_guide,
@@ -26,7 +24,7 @@ from ...soil_and_water import (
     simulate_crop_water_and_thermal_physics,
     wapor_water_productivity_context,
 )
-from ...water_balance import (
+from agroshift.science.soil_water.water_balance import (
     DEFAULT_STAGE_FRACTIONS,
     build_daily_kc_curve,
     compute_fao56_penman_monteith_daily,
@@ -34,11 +32,9 @@ from ...water_balance import (
 )
 
 __all__ = [
-    "AquaCropSimulationResult",
     "DEFAULT_STAGE_FRACTIONS",
     "IRRIGATION_SCHEDULE_PRESETS",
     "LANDFORM_PRESETS",
-    "SOIL_PROFILE_PRESETS",
     "build_daily_kc_curve",
     "classify_usda_texture",
     "compute_fao56_penman_monteith_daily",

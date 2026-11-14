@@ -16,7 +16,7 @@ import calendar
 import numpy as np
 import pandas as pd
 
-from .climate import aggregate
+from agroshift.science.climate.climate import aggregate
 
 MIN_YEARS = 10
 LGP_RAIN_FRACTION = 0.5
@@ -178,7 +178,7 @@ def seasonal_weather_risk_summary(dataset, window) -> dict | None:
     """Compute historical weather-extreme frequencies and decadal shift for a recurring window."""
     if dataset is None or window is None or dataset.frame.empty:
         return None
-    from .extremes import analyze_season_extremes
+    from agroshift.science.climate.extremes import analyze_season_extremes
 
     frame = dataset.frame
     rows = []
@@ -242,7 +242,7 @@ def crop_12month_sowing_matrix(dataset, cards: list[dict], max_crops: int = 8) -
     """Evaluate how each candidate crop fits all 12 possible planting start months."""
     if dataset is None or not cards:
         return None
-    from .knowledge import global_traits
+    from agroshift.science.knowledge.knowledge import global_traits
 
     clim = climatology_for(dataset)
     if clim["t_mean"].isna().all():
@@ -319,7 +319,7 @@ def crop_stage_water_demand(crop_id: str, dataset, window) -> list[dict] | None:
     """Compute 4-stage FAO-56 crop water demand (ETc = Kc * ET0) vs historical rainfall."""
     if dataset is None or window is None:
         return None
-    from .knowledge import growth_stages
+    from agroshift.science.knowledge.knowledge import growth_stages
 
     stages = growth_stages(crop_id)
     if not stages:
@@ -369,8 +369,8 @@ def previous_crop_rotation_badge(previous_crop_id: str | None, candidate_crop_id
     """Evaluate botanical succession from the farmer's previous crop using rotation_engine."""
     if not previous_crop_id or previous_crop_id in ("unknown", ""):
         return None
-    from .knowledge import crop_by_id
-    from .rotation import evaluate_transition
+    from agroshift.science.knowledge.knowledge import crop_by_id
+    from agroshift.rotation import evaluate_transition
 
     prev_crop = crop_by_id(previous_crop_id)
     cand_crop = crop_by_id(candidate_crop_id)

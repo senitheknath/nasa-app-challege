@@ -7,11 +7,18 @@ import math
 import numpy as np
 import pandas as pd
 
-from .educational_traits import SYNTHETIC_CLASSES as GLOBAL_CROPS
-from .power import DataError
-from .climate import classify_anomalies, season_samples, seasonal_summary
+from agroshift.science.ml_lab.educational_traits import SYNTHETIC_CLASSES as GLOBAL_CROPS
+from agroshift.science.climate.power import DataError
+from agroshift.science.climate.climate import classify_anomalies, season_samples, seasonal_summary
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 DATASET_PATH = ROOT / "data" / "global_crop_dataset.csv"
 MODEL_BUNDLE_PATH = ROOT / "data" / "models" / "agroshift_ml_bundle.json"
 
@@ -810,7 +817,7 @@ def predict_farm_crops_ml(dataset, farm, bundle=None):
 
 
 def run_autonomous_ai_agent(dataset, farm, project_name="My Eco Farm", weights=None):
-    from .assistant import eligible_crops_and_rotations
-    from .decision import CRITERIA
+    from agroshift.science.ml_lab.assistant import eligible_crops_and_rotations
+    from agroshift.science.decision.decision import CRITERIA
     return {"mode":"reference screening", "selection":eligible_crops_and_rotations(
         dataset, farm, weights if weights is not None else dict.fromkeys(CRITERIA,25))}

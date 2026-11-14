@@ -5,10 +5,17 @@ import json
 import math
 from pathlib import Path
 
-from .climate import Window, season_samples
-from .power import DataError, coordinates
+from agroshift.science.climate.climate import Window, season_samples
+from agroshift.science.climate.power import DataError, coordinates
 
-ROOT = Path(__file__).resolve().parents[1]
+_curr = Path(__file__).resolve()
+while _curr != _curr.parent:
+    if (_curr / "data").is_dir() and (_curr / "agroshift").is_dir():
+        ROOT = _curr
+        break
+    _curr = _curr.parent
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE = json.loads((ROOT / "data/crops.json").read_text(encoding="utf-8"))
 CROPS = KNOWLEDGE["crops"]
 CRITERIA = ("temperature", "water", "soil", "diversification")
@@ -56,7 +63,7 @@ class Farm:
         if self.baseline and (len(self.baseline) != 2 or not set(self.baseline) <= set(CROPS)):
             raise DataError("Select two supported baseline crops.")
         if self.current not in (*CROPS, "unknown") or self.previous not in (*CROPS, "unknown"):
-            from .knowledge import crop_by_id
+            from agroshift.science.knowledge.knowledge import crop_by_id
             if any(value != "unknown" and crop_by_id(value) is None for value in (self.current, self.previous)):
                 raise DataError("Unsupported crop history.")
         if len(self.windows) not in (1, 2):
@@ -148,7 +155,7 @@ def verify_climate(frame, farm):
 
 
 def capability(farm):
-    from .geography import pilot_scope
+    from agroshift.earth_data.geography import pilot_scope
     if len(farm.windows) == 2 and pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed):
         return "Level 2 · Sri Lankan reference-based crop screening"
     return "Global climate and crop reference screening"
@@ -156,7 +163,7 @@ def capability(farm):
 
 def assess(frame, farm, weights, rain_factor=1.0, temp_delta=0.0):
     """Order by conservative lower bounds; overlap remains explicitly unresolved."""
-    from .geography import pilot_scope
+    from agroshift.earth_data.geography import pilot_scope
     farm.validate()
     if not pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed):
         raise DataError("Rotation exploration is limited to farmer-confirmed Sri Lankan lowland dry/intermediate settings. Global climate remains available.")

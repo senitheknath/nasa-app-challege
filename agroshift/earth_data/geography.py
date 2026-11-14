@@ -7,8 +7,8 @@ import threading
 import time
 import requests
 
-from .power import DataError, coordinates
-from .provider_http import get
+from agroshift.science.climate.power import DataError, coordinates
+from agroshift.earth_data.provider_http import get
 
 _places = OrderedDict()
 _guard = threading.Lock()

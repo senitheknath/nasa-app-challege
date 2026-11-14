@@ -4,8 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .climate import dry_spell
-from .water_balance import DEFAULT_STAGE_FRACTIONS, build_daily_kc_curve
+from agroshift.science.climate.climate import dry_spell
+from agroshift.science.soil_water.water_balance import DEFAULT_STAGE_FRACTIONS, build_daily_kc_curve
 
 
 def _longest_run(mask: pd.Series) -> int:

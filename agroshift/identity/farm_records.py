@@ -7,9 +7,9 @@ import math
 import uuid
 
 import pycountry
-from .climate import Window
-from .decision import Farm
-from .power import DataError
+from agroshift.science.climate.climate import Window
+from agroshift.science.decision.decision import Farm
+from agroshift.science.climate.power import DataError
 
 
 def utc_now():
