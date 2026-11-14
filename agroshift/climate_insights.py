@@ -370,7 +370,7 @@ def previous_crop_rotation_badge(previous_crop_id: str | None, candidate_crop_id
     if not previous_crop_id or previous_crop_id in ("unknown", ""):
         return None
     from .knowledge import crop_by_id
-    from .rotation_engine import evaluate_transition
+    from .rotation import evaluate_transition
 
     prev_crop = crop_by_id(previous_crop_id)
     cand_crop = crop_by_id(candidate_crop_id)

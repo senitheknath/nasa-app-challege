@@ -6,9 +6,16 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from agroshift.geo_cache import cell_key, get_cached, set_cached, list_cached_types, get_connection
-from agroshift.satellite_monitor import get_active_monitoring_layers, fetch_satellite_overpasses
-from agroshift.field_autofill import derive_field_autofill
+from agroshift.earth_data import (
+    cell_key,
+    derive_field_autofill,
+    fetch_satellite_overpasses,
+    get_active_monitoring_layers,
+    get_cached,
+    get_connection,
+    list_cached_types,
+    set_cached,
+)
 from api.server import app
 
 

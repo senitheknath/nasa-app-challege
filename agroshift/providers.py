@@ -75,6 +75,16 @@ GAEZ_CROP_ID_MAP = {
     "cabbage": "Cabbage",
 }
 GAEZ_CLASSES = ("No data", "Very high", "High", "Good", "Medium", "Moderate", "Marginal", "Very marginal", "Not suitable", "Water")
+GAEZ_SCALE = [
+    ("Very high", "#007000", "#FFFFFF"),
+    ("High", "#15AE11", "#FFFFFF"),
+    ("Good", "#ACE15E", "#1B2A21"),
+    ("Medium", "#FFE853", "#1B2A21"),
+    ("Moderate", "#FFAE34", "#1B2A21"),
+    ("Marginal", "#FF6B35", "#FFFFFF"),
+    ("Very marginal", "#D72638", "#FFFFFF"),
+    ("Not suitable", "#7A7A7A", "#FFFFFF"),
+]
 WATER = {"rainfed": "LRLM", "irrigated": "LILM"}
 
 

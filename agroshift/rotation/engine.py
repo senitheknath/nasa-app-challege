@@ -6,8 +6,8 @@ from datetime import date
 from itertools import product
 from typing import Any, Callable, Literal, Sequence
 
-from .knowledge import crop_by_id, global_traits
-from .screening import find_options
+from ..knowledge import crop_by_id, global_traits
+from ..screening import find_options
 
 Severity = Literal["blocker", "caution", "benefit"]
 TransitionStatus = Literal["blocked", "caution", "conditional", "complementary"]

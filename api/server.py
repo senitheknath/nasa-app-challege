@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from agroshift.auth_store import (
+from agroshift.identity import (
     authenticate_or_register,
     delete_user_farm,
     get_user_from_token,
@@ -40,7 +40,11 @@ from agroshift.decision import CRITERIA, Farm, Window, assess, priority_sensitiv
 from agroshift.evidence_combination import build_evidence_layers
 from agroshift.farm_context import capabilities, location_context
 from agroshift.finder_report import make_record, readable
-from agroshift.field_autofill import derive_field_autofill
+from agroshift.earth_data import (
+    derive_field_autofill,
+    fetch_satellite_overpasses,
+    get_active_monitoring_layers,
+)
 from agroshift.geography import pilot_scope, search_places
 from agroshift.knowledge import (
     count_crops,
@@ -59,11 +63,9 @@ from agroshift.locations import (
 )
 from agroshift.pests import evaluate_crop_pest_context
 from agroshift.power import DataError
-from agroshift.satellite_monitor import fetch_satellite_overpasses, get_active_monitoring_layers
-from agroshift.providers import GAEZ_CROP_ID_MAP, gaez_point, gaez_polygon
-from agroshift.rotation_engine import plan_global_rotations
+from agroshift.providers import GAEZ_CROP_ID_MAP, GAEZ_SCALE, gaez_point, gaez_polygon
+from agroshift.rotation import plan_global_rotations
 from agroshift.screening import find_options
-from agroshift.ui_components import GAEZ_SCALE
 from agroshift.water_balance import seasonal_water_balance_summary
 
 _DATASET_CACHE: OrderedDict[tuple[float, float], Any] = OrderedDict()

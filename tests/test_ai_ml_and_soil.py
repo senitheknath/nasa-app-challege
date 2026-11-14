@@ -160,28 +160,6 @@ def test_counterfactual_copilot_and_voi_assistant():
     assert len(cf["table"]) >= 2
 
 
-def test_ui_water_translator_button_preserves_defaults_until_clicked():
-    at = AppTest.from_file("../app.py", default_timeout=30).run()
-    next(b for b in at.button if b.label == "Try an example farm").click().run()
-    at.session_state["page"] = "conditions"
-    at.session_state["wf_irrigation"] = "supplemental"
-    at.run()
-
-    # Before clicking translator button, wf_irrigation_mm must remain None
-    assert at.session_state["wf_irrigation_mm"] is None
-
-    next(s for s in at.selectbox if s.key == "helper_landform").set_value("bunded_paddy").run()
-    next(s for s in at.selectbox if s.key == "helper_irrig_schedule").set_value("agro_well_weekly").run()
-
-    translator_btns = [b for b in at.button if b.key == "apply_water_translator"]
-    assert len(translator_btns) == 1
-    translator_btns[0].click().run()
-
-    assert at.session_state["wf_rain_fraction"] == 0.72
-    assert at.session_state["wf_irrigation_mm"] == 180.0
-    assert at.session_state["wf_irrigation_basis"] == "estimate"
-
-
 def test_phase1_nrmc_aer_scs_rain_polygon_area_and_wfp_prices():
     from agroshift.farm_records import polygon_area_hectares
     from agroshift.soil_and_water import (
@@ -224,28 +202,6 @@ def test_phase1_nrmc_aer_scs_rain_polygon_area_and_wfp_prices():
     wfp = market_price_context("LK")
     assert wfp["status"] == "verified"
     assert len(wfp["value"]) >= 5
-
-
-def test_ui_soil_ribbon_test_and_irrigation_turn_counter():
-    at = AppTest.from_file("../app.py", default_timeout=30).run()
-    next(b for b in at.button if b.label == "Try an example farm").click().run()
-    at.session_state["page"] = "conditions"
-    at.session_state["wf_irrigation"] = "supplemental"
-    at.run()
-
-    next(s for s in at.selectbox if s.key == "helper_ribbon_test").set_value("short_ribbon_gritty").run()
-    next(s for s in at.selectbox if s.key == "helper_ph_strip").set_value("slightly_acidic_6_2").run()
-    next(b for b in at.button if b.key == "apply_soil_field_check").click().run()
-
-    assert at.session_state["wf_ph"] == 6.2
-    assert at.session_state["draft"]["soil_type"] == "sandy loam"
-
-    next(s for s in at.selectbox if s.key == "helper_delivery_mode").set_value("canal_tank_issue").run()
-    next(n for n in at.number_input if n.key == "helper_turn_count").set_value(4).run()
-    next(b for b in at.button if b.key == "apply_water_translator").click().run()
-
-    assert at.session_state["wf_irrigation_mm"] == 240.0
-    assert at.session_state["wf_irrigation_basis"] == "estimate"
 
 
 def test_multilingual_nlp_intake_and_satellite_contexts():

@@ -99,39 +99,6 @@ def test_identity_is_issuer_bound_and_requires_unexpired_verified_claims():
         owner_from_claims(claims, "https://another.example", now=100)
 
 
-def test_two_saved_farms_and_history_are_session_isolated(monkeypatch):
-    monkeypatch.setenv("AGROSHIFT_CONTEXT_OFFLINE", "1")
-    from test_app import demo, app, click, select
-
-    a = demo()
-    click(a, "Save this farm")
-    next(t for t in a.text_input if t.label == "Farm name").input("North field").run()
-    click(a, "Save farm")
-    first = a.session_state["active_farm_id"]
-    click(a, "Save farm")
-    assert len(a.session_state["session_history"][first]) == 1
-    click(a, "Add a farm")
-    select(a, "Country or territory", "KE")
-    select(a, "Find your field", "Saved locations")
-    select(a, "Location", "nairobi_kenya")
-    click(a, "Use this location")
-    assert a.session_state["context"]["point"] == ["KE", -1.2921, 36.8219]
-    click(a, "Continue")
-    select(a, "Planting month", 3)
-    select(a, "Last growing month", 7)
-    click(a, "Find crop options")
-    click(a, "Save this farm")
-    next(t for t in a.text_input if t.label == "Farm name").input("Kenya field").run()
-    click(a, "Save farm")
-    assert len(a.session_state["session_farms"]) == 2
-    a.button(key="open_farm_" + first).click().run()
-    assert not a.exception
-    assert a.session_state["farm"].country == "LK" and a.session_state["farm"].ph == 6.5
-    assert a.session_state["active_farm_id"] == first
-    click(a, "Dashboard")
-    assert any("North field" in t.value for t in a.subheader)
-    assert not app().session_state["session_farms"]
-
 
 def test_automatic_context_failure_stays_separate(monkeypatch):
     from agroshift import farm_context
@@ -156,17 +123,20 @@ def test_automatic_context_failure_stays_separate(monkeypatch):
 
 def test_capabilities_and_report_preserve_missing_factors(monkeypatch):
     monkeypatch.setenv("AGROSHIFT_CONTEXT_OFFLINE", "1")
-    from test_app import demo
+    from agroshift.decision import Farm, CRITERIA
+    from agroshift.farm_context import location_context
     from agroshift.finder_report import make_record, readable
+    from agroshift.power import load_snapshot
+    from agroshift.screening import find_options
+    from pathlib import Path
 
-    a = demo()
-    r = make_record(
-        a.session_state["dataset"],
-        a.session_state["farm"],
-        a.session_state["cards"],
-        a.session_state["weights"],
-        a.session_state["context"],
-    )
+    root = Path(__file__).resolve().parents[1]
+    ds = load_snapshot(root / "data" / "demo_power.json")
+    farm = Farm(country="LK", latitude=8.3114, longitude=80.4037, pilot_confirmed=True)
+    weights = {k: 25.0 for k in CRITERIA}
+    cards = find_options(farm, ds, weights=weights)
+    context = location_context(farm.country, farm.latitude, farm.longitude, offline=True)
+    r = make_record(ds, farm, cards, weights, context)
     assert (
         r["capabilities"]["C"]["available"] and not r["capabilities"]["D"]["available"]
     )
