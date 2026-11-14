@@ -143,6 +143,18 @@ def run_demo(lat: float, lon: float, country: str, boundary: dict | None, window
             print(f"      S2: {s2['crop_name']} ({s2['family']}) [{s2['window']}]")
             print(f"      Summary: {p['summary']}")
 
+            # Print exact timeline milestones
+            tl = p.get("timeline", {})
+            tb = tl.get("turnaround_summary", {})
+            if tb.get("buffer_days") is not None:
+                print(f"      ⏱️  Timeline & Buffer: {tb.get('buffer_days')} days [{tb.get('status').upper()}]")
+                print(f"         Advisory: {tb.get('advisory')}")
+
+            for slot in tl.get("slots", []):
+                print(f"         - {slot['crop_name']}: Sow {slot['sowing_date']} ──> Harvest {slot['harvest_nominal_date']} ({slot['growth_cycle_days']['nominal']}d) [Slack: {slot['delay_slack_days']}d]")
+                for st in slot.get("stages", []):
+                    print(f"           • {st['description']}: {st['start_date']} to {st['end_date']} ({st['duration_days']}d)")
+
             # Print exact findings from composable rules
             findings = p.get("transition", {}).get("findings", [])
             for f in findings:

@@ -8,6 +8,8 @@ from agroshift.science.knowledge.knowledge import crop_by_id, global_traits, gro
 from agroshift.science.decision.screening import find_options
 from .contracts import CropProfile, EnvironmentContext, RotationConfig, RuleFinding, TransitionStatus
 from .rules import DEFAULT_RULES, TransitionRule
+from .timeline_adapter import build_physical_timeline, quantize_crop_to_activity
+from .timeline_core import ArcConstraint, solve_trajectories
 
 
 def evaluate_transition(
@@ -195,6 +197,23 @@ def plan_global_rotations(
             else:
                 overall_status = "conditional"
 
+            act1 = quantize_crop_to_activity(p1, w1, s1_card)
+            act2 = quantize_crop_to_activity(p2, w2, s2_card)
+
+            def _arc_eval(_a1: Any, _a2: Any) -> ArcConstraint:
+                score = 15.0 if trans["status"] == "complementary" else (-50.0 if trans["status"] == "blocked" else 5.0)
+                return ArcConstraint(
+                    min_buffer=7,
+                    optimal_buffer=21,
+                    compatibility_score=score,
+                    hard_blocked=(trans["status"] == "blocked"),
+                    status=trans["status"],
+                    reasons=tuple(trans["benefits"] + trans["cautions"] + trans["blockers"]),
+                )
+
+            trajs = solve_trajectories([[act1], [act2]], _arc_eval)
+            timeline_data = build_physical_timeline(trajs[0]) if trajs else {}
+
             sequences.append(
                 {
                     "id": f"{c1_id}_then_{c2_id}",
@@ -220,6 +239,7 @@ def plan_global_rotations(
                         "water": s2_card.get("water", {}),
                     },
                     "transition": trans,
+                    "timeline": timeline_data,
                 }
             )
 
