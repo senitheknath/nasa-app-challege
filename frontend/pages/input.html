@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TERRAFORGE AGRO | Field Demarcation — Sri Lanka</title>
+  
+  <!-- Apple System Font Fallback & Inter Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet Map CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+  <!-- Core Application Stylesheet (Shared Theme) -->
+  <link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+
+  <!-- =========================================================================
+       1. Translucent Apple Navigation Bar
+       ========================================================================= -->
+  <header class="app-navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="nav-brand">
+        <div class="brand-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 0 1 10 10c0 5.5-4.5 10-10 10S2 17.5 2 12A10 10 0 0 1 12 2z"></path>
+            <path d="M12 6v12"></path>
+            <path d="M8 10a5 5 0 0 1 8 0"></path>
+            <path d="M7 15a7 7 0 0 1 10 0"></path>
+          </svg>
+        </div>
+        <div class="brand-text-wrap">
+          <span class="brand-title">TERRAFORGE AGRO</span>
+          <span class="brand-subtitle">Sri Lanka Industrial Agro-Grid</span>
+        </div>
+      </a>
+
+      <!-- Back to Country link -->
+      <div>
+        <a href="../index.html" class="btn-secondary-apple" style="text-decoration:none;">
+          <span>← Change Country (Sri Lanka)</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       2. Main Workflow Pipeline (Taprobyte Clean Architecture)
+       ========================================================================= -->
+  <main class="workflow-container">
+
+    <!-- Stage Tracker Bar (6 Modern Steps) -->
+    <nav class="stage-tracker-bar" aria-label="Workflow progress" id="stageTrackerNav">
+      <div class="stage-step completed" id="tabNav1" title="Return to Territory Calibration">
+        <span class="stage-number">✓</span>
+        <span>Country (LK)</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step active" id="tabNav2" title="Demarcate parcel boundary on satellite grid">
+        <span class="stage-number">2</span>
+        <span>Area Selection</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step" id="tabNav3" title="Cultivation strategy baseline">
+        <span class="stage-number">3</span>
+        <span>Crop Strategy</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step" id="tabNav4" title="Crop cycle & growth window calibration">
+        <span class="stage-number">4</span>
+        <span>Crop Calibration</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step" id="tabNav5" title="Farm constraints & priority tradeoffs">
+        <span class="stage-number">5</span>
+        <span>Constraints & Priorities</span>
+      </div>
+      <div class="stage-divider"></div>
+      <div class="stage-step" id="tabNav6" title="Industrial synthesis output & Pareto balance">
+        <span class="stage-number">6</span>
+        <span>Industrial Synthesis</span>
+      </div>
+    </nav>
+
+    <!-- Tab Content Container -->
+    <div class="tab-content-container">
+
+      <!-- =====================================================================
+           TAB 2: Area Selection Demarcation (Single-Pane Leaflet Viewport)
+           ===================================================================== -->
+      <div class="tab-pane active" id="tabPane2">
+
+    <!-- =======================================================================
+         SECTION 2: Area Selection Demarcation (World Map Centered on Sri Lanka)
+         ======================================================================= -->
+    <section class="app-card" id="mapSection">
+      <div class="card-header-bar">
+        <div class="card-header-left">
+          <span class="card-step-tag">Step 02</span>
+          <h2 class="card-title">Area Selection</h2>
+          <p class="card-subtitle">Demarcate field boundaries on the satellite grid.</p>
+        </div>
+      </div>
+
+      <!-- Map Viewport -->
+      <div class="map-viewport-wrapper">
+        <div id="industrialMap"></div>
+
+        <!-- Floating Glass Tool HUD (Top-Left) -->
+        <div class="map-hud-top-left">
+          <div class="glass-toolbar">
+            <button type="button" class="tool-btn" id="btnDrawParcel" title="Click to place boundary vertices; connect to first vertex to close.">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                <polyline points="2 17 12 22 22 17"></polyline>
+                <polyline points="2 12 12 17 22 12"></polyline>
+              </svg>
+              <span>Draw Area</span>
+            </button>
+
+            <button type="button" class="tool-btn danger" id="btnClearParcel" title="Clear boundary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              <span>Reset</span>
+            </button>
+          </div>
+
+          <!-- Drawing Guide Hint -->
+          <div class="polygon-guide-hint" id="polygonGuideHint" style="display: none;">
+            Click map to add vertex. Click starting point to close.
+          </div>
+        </div>
+
+        <!-- Floating Glass Location Search Toolbar (Top-Right) -->
+        <div class="map-hud-top-right">
+          <div class="map-search-toolbar">
+            <div class="map-search-input-wrap">
+              <svg class="map-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input 
+                type="text" 
+                id="mapSearchInput" 
+                class="map-search-input" 
+                placeholder="Search place or address in Sri Lanka..." 
+                autocomplete="off" 
+                spellcheck="false"
+              >
+              <button type="button" id="mapSearchClearBtn" class="map-search-clear" style="display:none;" title="Clear search">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Autocomplete Suggestions Dropdown -->
+          <div id="mapSearchResultsDropdown" class="map-search-dropdown" style="display:none;"></div>
+        </div>
+
+        <!-- Floating Parcel Status HUD & Continue Button (Bottom HUD, initially hidden) -->
+        <div class="map-hud-bottom" id="mapHudBottom" style="display: none;">
+          <div class="parcel-status-hud">
+            <div style="display:flex; align-items:center; gap:1.8rem; flex-wrap:wrap;">
+              <div class="hud-metric-unit">
+                <span class="hud-metric-label">Hectares Area</span>
+                <span class="hud-metric-val num"><span id="hudAreaHa">0.0</span> <small>ha</small></span>
+              </div>
+              <div class="hud-metric-unit">
+                <span class="hud-metric-label">Acres</span>
+                <span class="hud-metric-val num"><span id="hudAreaAc">0.0</span> <small>ac</small></span>
+              </div>
+              <div class="hud-metric-unit">
+                <span class="hud-metric-label">Perimeter</span>
+                <span class="hud-metric-val num"><span id="hudPerimeter">0.00</span> <small>km</small></span>
+              </div>
+              <div class="hud-metric-unit">
+                <span class="hud-metric-label">Nodes</span>
+                <span class="hud-metric-val num"><span id="hudVertices">0</span> <small>pts</small></span>
+              </div>
+            </div>
+
+            <!-- Apple Fluid Continue Button (Appears when polygon is closed) -->
+            <div class="hud-action-wrap">
+              <button type="button" class="btn-continue-parcel" id="btnContinueToCrops" style="display:none;">
+                <span>Continue</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div><!-- /.tab-pane #tabPane2 -->
+
+  <!-- =====================================================================
+       TAB 3: Crop Strategy (Rotation Baseline Selection - Pure Minimal Cards)
+       ===================================================================== -->
+  <div class="tab-pane" id="tabPane3">
+    <section class="app-card" id="cropStrategySection">
+      <div class="card-header-bar">
+        <div class="card-header-left">
+          <span class="card-step-tag">Step 03</span>
+          <h2 class="card-title">Cultivation Strategy</h2>
+          <p class="card-subtitle">Select active field baseline.</p>
+        </div>
+      </div>
+
+      <!-- 3 Strategy Cards (Pure Blue-Circled Part) -->
+      <div class="strategy-cards-grid">
+        
+        <!-- Card 1: Don't have a crop rotation -->
+        <div class="strategy-card" id="cardStrategyNone" data-strategy="none">
+          <div class="strategy-selected-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="strategy-illus-box">
+            <svg width="130" height="96" viewBox="0 0 130 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="65" cy="70" rx="55" ry="19" fill="#F0FDF4" stroke="#BBF7D0" stroke-width="1.5"/>
+              <ellipse cx="65" cy="70" rx="44" ry="13" fill="#DCFCE7" fill-opacity="0.6"/>
+              <path d="M 32 70 Q 65 80 98 70" stroke="#86EFAC" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="3 3"/>
+              <path d="M 40 65 Q 65 74 90 65" stroke="#86EFAC" stroke-width="1.2" stroke-linecap="round"/>
+              <circle cx="65" cy="52" r="9" fill="#187741" fill-opacity="0.12"/>
+              <circle cx="65" cy="52" r="4.5" fill="#187741"/>
+              <path d="M 65 52 Q 65 35 65 24" stroke="#187741" stroke-width="2.6" stroke-linecap="round"/>
+              <path d="M 65 33 Q 78 28 76 20 Q 65 22 65 31" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <path d="M 65 38 Q 52 32 54 26 Q 65 28 65 36" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <circle cx="96" cy="24" r="1.8" fill="#187741" opacity="0.6"/>
+              <circle cx="34" cy="32" r="1.8" fill="#187741" opacity="0.6"/>
+            </svg>
+          </div>
+          <span class="strategy-badge tag-raw">Fallow Land</span>
+          <h3 class="strategy-card-title">No Crop Rotation</h3>
+          <p class="strategy-card-desc">Newly cleared or virgin parcel without prior rotation history.</p>
+        </div>
+
+        <!-- Card 2: Using current crop -->
+        <div class="strategy-card" id="cardStrategyCurrent" data-strategy="current">
+          <div class="strategy-selected-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="strategy-illus-box">
+            <svg width="130" height="96" viewBox="0 0 130 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="65" cy="72" rx="52" ry="17" fill="#F0FDF4" stroke="#BBF7D0" stroke-width="1.5"/>
+              <path d="M 65 72 Q 58 82 50 87" stroke="#86EFAC" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M 65 72 Q 72 82 80 87" stroke="#86EFAC" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M 65 72 V 86" stroke="#86EFAC" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M 65 72 Q 63 48 65 18" stroke="#187741" stroke-width="3" stroke-linecap="round"/>
+              <path d="M 65 55 Q 44 48 42 36 Q 57 40 65 53" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <path d="M 65 46 Q 86 40 88 30 Q 73 34 65 44" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <path d="M 65 32 Q 46 24 49 14 Q 60 18 65 30" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <path d="M 65 24 Q 82 18 81 8 Q 69 12 65 22" fill="#38C172" stroke="#187741" stroke-width="1.3"/>
+              <ellipse cx="65" cy="14" rx="4.5" ry="7.5" fill="#F59E0B" stroke="#D97706" stroke-width="1.2"/>
+            </svg>
+          </div>
+          <span class="strategy-badge tag-current">Standing Crop</span>
+          <h3 class="strategy-card-title">Current Standing Crop</h3>
+          <p class="strategy-card-desc">Active commercial crop already planted on this parcel.</p>
+        </div>
+
+        <!-- Card 3: Current crop rotation -->
+        <div class="strategy-card" id="cardStrategyRotation" data-strategy="rotation">
+          <div class="strategy-selected-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="strategy-illus-box">
+            <svg width="130" height="96" viewBox="0 0 130 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="65" cy="48" r="34" stroke="#DCFCE7" stroke-width="6" stroke-dasharray="8 4"/>
+              <path d="M 65 14 A 34 34 0 0 1 99 48" stroke="#187741" stroke-width="2.6" stroke-linecap="round"/>
+              <path d="M 99 48 L 102 41 M 99 48 L 92 44" stroke="#187741" stroke-width="2.3" stroke-linecap="round"/>
+              <path d="M 65 82 A 34 34 0 0 1 31 48" stroke="#38C172" stroke-width="2.6" stroke-linecap="round"/>
+              <path d="M 31 48 L 28 55 M 31 48 L 38 52" stroke="#38C172" stroke-width="2.3" stroke-linecap="round"/>
+              <circle cx="65" cy="48" r="9" fill="#F0FDF4" stroke="#187741" stroke-width="1.5"/>
+              <circle cx="65" cy="48" r="3.5" fill="#187741"/>
+              <circle cx="99" cy="48" r="12" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+              <path d="M 99 42 V 54" stroke="#D97706" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="31" cy="48" r="12" fill="#DCFCE7" stroke="#187741" stroke-width="1.5"/>
+              <path d="M 31 44 Q 27 47 31 52 Q 35 47 31 44" fill="#38C172" stroke="#187741" stroke-width="1.2"/>
+            </svg>
+          </div>
+          <span class="strategy-badge tag-rotation">Crop Rotation</span>
+          <h3 class="strategy-card-title">Crop Rotation Cycle</h3>
+          <p class="strategy-card-desc">Active multi-crop seasonal cycle across Maha & Yala.</p>
+        </div>
+
+      </div>
+
+      <!-- Tab 3 Navigation Footer (Pure minimalism - no drawers below!) -->
+      <div class="step-card-footer">
+        <button type="button" class="btn-step-prev" id="btnBackToTab2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Back</span>
+        </button>
+        <button type="button" class="btn-step-next" id="btnForwardToTab4">
+          <span>Continue</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </section>
+  </div><!-- /#tabPane3 -->
+
+  <!-- =====================================================================
+       TAB 4: Crop Calibration & Agronomic Details (The Yellow Part)
+       ===================================================================== -->
+  <div class="tab-pane" id="tabPane4">
+    <section class="app-card" id="cropCalibrationSection">
+      <div class="card-header-bar">
+        <div class="card-header-left">
+          <span class="card-step-tag">Step 04</span>
+          <h2 class="card-title" id="cropCalibrationTitle">Crop Calibration</h2>
+          <p class="card-subtitle" id="cropCalibrationSubtitle">Configure crop varieties and growing dates.</p>
+        </div>
+        <div>
+          <button type="button" class="btn-secondary-apple" id="btnChangeStrategy">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Change Strategy</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Dynamic Action / Configuration Panels for each strategy -->
+      
+      <!-- Panel 1: Option 1 Selected (Don't have rotation) -->
+      <div id="drawerStrategyNone" class="strategy-drawer" style="display: none;">
+        <div class="drawer-notice-box">
+          <div class="drawer-notice-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <div class="drawer-notice-text">
+            <strong>Fallow Land Profile Selected</strong>
+            <span>Parcel configured without prior crop history. Soil dynamics benchmarked on virgin fallow conditions.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel 2: Option 2 Selected (Using Current Crop -> Select Crop + Sowing Date) -->
+      <div id="drawerStrategyCurrent" class="strategy-drawer" style="display: none;">
+        <div class="drawer-inner-grid">
+          <!-- Left: Crop Selection with Search & Quick Chips -->
+          <div class="drawer-crop-select-panel">
+            <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>Select Active Standing Crop</span>
+              <span id="selectedCropPreviewBadge" class="crop-status-pill">Paddy Rice (Maha / Yala)</span>
+            </label>
+
+            <!-- Standing Crop Search Input -->
+            <div class="standing-crop-search-wrap">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="standingCropSearchInput" class="standing-crop-search-input" placeholder="Search current crop (e.g. Paddy, Tea, Coconut, Maize...)">
+            </div>
+
+            <!-- Quick Commercial Crop Badges Grid -->
+            <div class="standing-crop-chips-grid" id="standingCropChipsGrid">
+              <!-- Dynamically populated chips from CROPS_DATA in input.js -->
+            </div>
+          </div>
+
+          <!-- Right: Growing Started Date & Duration -->
+          <div class="drawer-date-select-panel">
+            <label class="form-label">Growing Started Date (Sowing / Planting)</label>
+            <div class="date-input-container">
+              <input type="date" id="standingCropStartDate" class="apple-input" value="2026-10-01">
+            </div>
+
+            <div class="date-quick-presets">
+              <span style="font-size: 0.68rem; color:#667085; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;">Quick Season Presets:</span>
+              <div class="preset-buttons-row">
+                <button type="button" class="preset-pill-btn active" data-date="2026-10-01">Current Maha (Oct 2026)</button>
+                <button type="button" class="preset-pill-btn" data-date="2026-05-15">Previous Yala (May 2026)</button>
+                <button type="button" class="preset-pill-btn" data-date="days-30">30 Days Ago</button>
+              </div>
+            </div>
+
+            <!-- Summary Card -->
+            <div class="standing-crop-summary-card" id="standingCropSummaryCard">
+              <div style="font-size:0.75rem; color:#475467;">Standing Crop Profile</div>
+              <div style="font-size:0.88rem; font-weight:700; color:#187741;" id="summaryCropName">Paddy Rice (Maha / Yala)</div>
+              <div style="font-size:0.72rem; color:#667085;" id="summaryCropMetrics">Category: Cereals • Base Yield: 5.2 t/ha • Water Req: High (85%)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel 3: Option 3 Selected (Current Crop Rotation -> Embedded Agronomic Cycle) -->
+      <div id="drawerStrategyRotation" class="strategy-drawer" style="display: none;">
+        <div class="drawer-notice-box rotation" style="margin-bottom: 1.25rem;">
+          <div class="drawer-notice-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </div>
+          <div class="drawer-notice-text">
+            <strong>Crop Rotation Cycle Selected</strong>
+            <span>Configure seasonal windows and rotation sequencing below.</span>
+          </div>
+        </div>
+
+        <!-- Embedded Agronomic Cycle Configuration Grid -->
+        <div class="grid-two-columns">
+          <!-- Temporal Period Selector -->
+          <div class="period-panel-box">
+            <div>
+              <label class="form-label">Production Monsoon Season</label>
+              <div class="segmented-control">
+                <div class="segmented-option active season-option" data-season="maha">Maha Season (Sep–Mar)</div>
+                <div class="segmented-option season-option" data-season="yala">Yala Season (May–Aug)</div>
+                <div class="segmented-option season-option" data-season="perennial">Year-Round Perennial</div>
+              </div>
+            </div>
+
+            <div>
+              <label class="form-label">Active Growing Window</label>
+              <div class="date-inputs-row">
+                <div>
+                  <span style="font-size: 0.72rem; color: #667085; display:block; margin-bottom: 2px;">Planting / Sowing</span>
+                  <input type="month" id="cropPeriodStart" class="apple-input" value="2026-10">
+                </div>
+                <div>
+                  <span style="font-size: 0.72rem; color: #667085; display:block; margin-bottom: 2px;">Harvest / Termination</span>
+                  <input type="month" id="cropPeriodEnd" class="apple-input" value="2027-03">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Crops Multi-Select -->
+          <div>
+            <label class="form-label">Select Crops Grown In Demarcated Parcel (Multi-Select)</label>
+            <div class="crop-cards-grid" id="cropsGridContainer">
+              <!-- Dynamically populated from CROPS_DATA -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 4 Navigation Footer -->
+      <div class="step-card-footer">
+        <button type="button" class="btn-step-prev" id="btnBackToTab3">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Back</span>
+        </button>
+        <button type="button" class="btn-step-next" id="btnForwardToTab5">
+          <span>Continue</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </section>
+  </div><!-- /#tabPane4 -->
+
+  <!-- =====================================================================
+       TAB 5: Merged Farm Constraints & Multi-Objective Priorities
+       ===================================================================== -->
+  <div class="tab-pane" id="tabPane5">
+    <section class="app-card" id="mergedConstraintsSection">
+      <div class="card-header-bar">
+        <div class="card-header-left">
+          <span class="card-step-tag">Step 05</span>
+          <h2 class="card-title">Constraints & Priorities</h2>
+          <p class="card-subtitle">Set irrigation, machinery, market targets, and optimization weights.</p>
+        </div>
+      </div>
+
+      <!-- Part A: Operational Logistics & Constraints -->
+      <div class="constraints-grid">
+        <!-- 1. Irrigation Access -->
+        <div class="constraint-card">
+          <div class="constraint-header">
+            <div class="constraint-icon-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+              </svg>
+            </div>
+            <span class="constraint-title">Irrigation Access</span>
+          </div>
+
+          <div class="irrigation-options">
+            <div class="irrigation-card-choice" data-irrigation="none">
+              <div class="irr-info">
+                <span class="irr-title">None (Rainfed Dry Zone)</span>
+                <span class="irr-desc">Reliance on monsoon rainfall</span>
+              </div>
+              <div class="irr-radio-circle"></div>
+            </div>
+
+            <div class="irrigation-card-choice active" data-irrigation="limited">
+              <div class="irr-info">
+                <span class="irr-title">Limited (Minor Tank / Well)</span>
+                <span class="irr-desc">Supplementary agro-well / cascade tank</span>
+              </div>
+              <div class="irr-radio-circle"></div>
+            </div>
+
+            <div class="irrigation-card-choice" data-irrigation="full">
+              <div class="irr-info">
+                <span class="irr-title">Full (Mahaweli Canal / Drip)</span>
+                <span class="irr-desc">Continuous canal sluice or automated drip</span>
+              </div>
+              <div class="irr-radio-circle"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Available Equipment -->
+        <div class="constraint-card">
+          <div class="constraint-header">
+            <div class="constraint-icon-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="3" width="15" height="13"></rect>
+                <polygon points="16 8 20 8 23 11 23 16 16 16 8"></polygon>
+                <circle cx="5.5" cy="18.5" r="2.5"></circle>
+                <circle cx="18.5" cy="18.5" r="2.5"></circle>
+              </svg>
+            </div>
+            <span class="constraint-title">Available Equipment</span>
+          </div>
+
+          <div class="badge-chips-selector">
+            <div class="equipment-chip selected" data-equip="tractor">
+              <span>4WD Tractor</span>
+            </div>
+            <div class="equipment-chip selected" data-equip="harvester">
+              <span>Combine Harvester</span>
+            </div>
+            <div class="equipment-chip selected" data-equip="pump">
+              <span>High-Volume Pump</span>
+            </div>
+            <div class="equipment-chip" data-equip="tiller">
+              <span>Power Tiller</span>
+            </div>
+            <div class="equipment-chip" data-equip="drone">
+              <span>Spraying Drone Swarm</span>
+            </div>
+            <div class="equipment-chip" data-equip="drill">
+              <span>Direct Seeder</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Target Markets -->
+        <div class="constraint-card">
+          <div class="constraint-header">
+            <div class="constraint-icon-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="1" x2="12" y2="23"></line>
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+              </svg>
+            </div>
+            <span class="constraint-title">Target Commercial Markets</span>
+          </div>
+
+          <div class="badge-chips-selector">
+            <div class="market-chip selected" data-market="regional">
+              <span>Regional Wholesale (Dambulla)</span>
+            </div>
+            <div class="market-chip selected" data-market="export">
+              <span>Export Terminal (Colombo)</span>
+            </div>
+            <div class="market-chip" data-market="mill">
+              <span>Processing Mill</span>
+            </div>
+            <div class="market-chip" data-market="board">
+              <span>Ceylon GI Contract</span>
+            </div>
+            <div class="market-chip" data-market="forage">
+              <span>Livestock Silage</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Part B: Multi-Objective Priority Calibration -->
+      <div class="tab-section-divider">
+        <div>
+          <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary); margin: 0;">Optimization Priorities (0.0 to 1.0 Weights)</h3>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0.15rem 0 0;">Adjust trade-offs across agronomic and economic indicators.</p>
+        </div>
+        <div class="normalize-toggle-box">
+          <span>Auto-Normalize Weights to 1.0</span>
+          <label class="apple-switch">
+            <input type="checkbox" id="toggleNormalizeWeights">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="sliders-matrix-grid">
+        <!-- 1. Water Saving -->
+        <div class="priority-slider-card">
+          <div class="slider-top-row">
+            <div class="slider-label-group">
+              <span class="slider-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+                </svg>
+              </span>
+              <span class="slider-name">Water Saving</span>
+            </div>
+            <span class="slider-weight-badge num" id="badge_waterSaving">0.80</span>
+          </div>
+          <div class="apple-slider-wrap">
+            <input type="range" id="slider_waterSaving" class="apple-range-input" min="0" max="1" step="0.05" value="0.80">
+          </div>
+          <p class="slider-meta-desc">Conserves tank storage & optimizes deficit irrigation delivery.</p>
+        </div>
+
+        <!-- 2. Soil Health -->
+        <div class="priority-slider-card">
+          <div class="slider-top-row">
+            <div class="slider-label-group">
+              <span class="slider-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"></path>
+                  <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"></path>
+                </svg>
+              </span>
+              <span class="slider-name">Soil Health</span>
+            </div>
+            <span class="slider-weight-badge num" id="badge_soilHealth">0.75</span>
+          </div>
+          <div class="apple-slider-wrap">
+            <input type="range" id="slider_soilHealth" class="apple-range-input" min="0" max="1" step="0.05" value="0.75">
+          </div>
+          <p class="slider-meta-desc">Promotes tropical organic carbon and root mycorrhizal fungal health.</p>
+        </div>
+
+        <!-- 3. Income -->
+        <div class="priority-slider-card">
+          <div class="slider-top-row">
+            <div class="slider-label-group">
+              <span class="slider-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+              </span>
+              <span class="slider-name">Income & Margins</span>
+            </div>
+            <span class="slider-weight-badge num" id="badge_income">0.90</span>
+          </div>
+          <div class="apple-slider-wrap">
+            <input type="range" id="slider_income" class="apple-range-input" min="0" max="1" step="0.05" value="0.90">
+          </div>
+          <p class="slider-meta-desc">Maximizes per-hectare cash yield and export quality realization.</p>
+        </div>
+
+        <!-- 4. Erosion Control -->
+        <div class="priority-slider-card">
+          <div class="slider-top-row">
+            <div class="slider-label-group">
+              <span class="slider-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                </svg>
+              </span>
+              <span class="slider-name">Erosion Control</span>
+            </div>
+            <span class="slider-weight-badge num" id="badge_erosionControl">0.70</span>
+          </div>
+          <div class="apple-slider-wrap">
+            <input type="range" id="slider_erosionControl" class="apple-range-input" min="0" max="1" step="0.05" value="0.70">
+          </div>
+          <p class="slider-meta-desc">Protects hilly terrain from monsoonal runoff erosion and soil loss.</p>
+        </div>
+
+        <!-- 5. Forage / Biomass -->
+        <div class="priority-slider-card">
+          <div class="slider-top-row">
+            <div class="slider-label-group">
+              <span class="slider-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                  <polyline points="2 17 12 22 22 17"></polyline>
+                  <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+              </span>
+              <span class="slider-name">Forage & Biomass</span>
+            </div>
+            <span class="slider-weight-badge num" id="badge_forage">0.45</span>
+          </div>
+          <div class="apple-slider-wrap">
+            <input type="range" id="slider_forage" class="apple-range-input" min="0" max="1" step="0.05" value="0.45">
+          </div>
+          <p class="slider-meta-desc">Balances livestock feed turnover with organic mulch retention.</p>
+        </div>
+      </div>
+
+      <!-- Tab 5 Navigation Footer -->
+      <div class="step-card-footer">
+        <button type="button" class="btn-step-prev" id="btnBackToTab4">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Back</span>
+        </button>
+        <button type="button" class="btn-step-next" id="btnToTab6">
+          <span>Run Synthesis</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </button>
+      </div>
+    </section>
+  </div><!-- /#tabPane5 -->
+
+  <!-- =====================================================================
+       TAB 6: Industrial Synthesis & Recommendation Matrix
+       ===================================================================== -->
+  <div class="tab-pane" id="tabPane6">
+    <section class="app-card" id="step06SynthesisSection">
+      <div class="card-header-bar">
+        <div class="card-header-left">
+          <span class="card-step-tag">Step 06</span>
+          <h2 class="card-title">Industrial Synthesis</h2>
+          <p class="card-subtitle">Synthesized directives computed from field parameters.</p>
+        </div>
+      </div>
+
+      <div class="synthesis-dashboard-grid">
+        <!-- 5-Axis Multi-Objective Radar Chart -->
+        <div class="radar-box-card">
+          <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#187741; margin-bottom: 0.5rem;">
+            Multi-Objective Pareto Balance
+          </span>
+          <div class="radar-svg-container">
+            <svg id="radarSvg" viewBox="0 0 320 280" style="width:100%; height:100%; overflow:visible;"></svg>
+          </div>
+        </div>
+
+        <!-- Agronomic KPI Grid -->
+        <div class="kpi-cards-grid">
+          <!-- Financial Economic Gross Projection Card -->
+          <div class="kpi-card financial-kpi-card" style="grid-column: span 2;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <span class="kpi-title">Gross Industrial Revenue Projection</span>
+                <div style="font-size:0.75rem; color:#667085;">Computed based on demarcated acreage, commodity grade & target markets</div>
+              </div>
+              <div class="dow-sparkline-wrap" style="max-width:90px; height:28px;">
+                <svg class="dow-sparkline-svg" viewBox="0 0 110 32">
+                  <path id="dowSparklinePath" d="M 0 24 L 15 20 L 30 26 L 45 14 L 60 18 L 75 8 L 90 12 L 105 4" 
+                        fill="none" stroke="#38C172" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="105" cy="4" r="3" fill="#38C172"/>
+                </svg>
+              </div>
+            </div>
+            <div class="kpi-value-row" style="margin-top:0.4rem;">
+              <span class="kpi-big-num num" id="dowMetricValue">$68,500.00</span>
+              <span class="kpi-badge num" id="dowMarginPill">+ 24.2% Margins</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-title">Water Conserved Index</span>
+            <div class="kpi-value-row">
+              <span class="kpi-big-num num" id="kpiWaterConserved">9,800 m³</span>
+              <span class="kpi-badge">+42% Efficiency</span>
+            </div>
+            <span class="kpi-footnote">Saved through tank cascade pulse timing</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-title">Soil Carbon Index</span>
+            <div class="kpi-value-row">
+              <span class="kpi-big-num num" id="kpiSoilHealth">86 / 100</span>
+              <span class="kpi-badge">Class A Prime</span>
+            </div>
+            <span class="kpi-footnote">Organic mulch preservation</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-title">Erosion Mitigation</span>
+            <div class="kpi-value-row">
+              <span class="kpi-big-num num" id="kpiErosionMitigation">94%</span>
+              <span class="kpi-badge">Top Tier</span>
+            </div>
+            <span class="kpi-footnote">Terrace bunding & cover structure</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-title">Total Biomass Yield</span>
+            <div class="kpi-value-row">
+              <span class="kpi-big-num num" id="kpiBiomassYield">115 t</span>
+              <span class="kpi-badge">Target Met</span>
+            </div>
+            <span class="kpi-footnote">Aggregate dry matter across parcel</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Strategic Directives -->
+      <div class="directives-card">
+        <span style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #187741;">
+          Calibrated Agronomic Operational Directives
+        </span>
+        <ul class="directives-list" id="agronomicDirectivesList">
+          <!-- Dynamically populated -->
+        </ul>
+      </div>
+
+      <!-- Action Footer -->
+      <div class="action-footer-bar">
+        <button type="button" class="btn-step-prev" id="btnBackToTab5">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Back</span>
+        </button>
+        <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+          <button type="button" class="btn-secondary-apple" id="btnSyncBackend" title="Transmit calibrated parameters directly to separate backend API">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+              <path d="M16 21h5v-5"></path>
+            </svg>
+            <span>Save to Backend</span>
+          </button>
+          <button type="button" class="btn-secondary-apple" id="btnExportPlan">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Export JSON</span>
+          </button>
+          <button type="button" class="btn-primary-apple" id="btnPrintReport">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <polyline points="6 9 6 2 18 2 18 9"></polyline>
+              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+              <rect x="6" y="14" width="12" height="8"></rect>
+            </svg>
+            <span>Print Report</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </div><!-- /#tabPane6 -->
+
+</div><!-- /.tab-content-container -->
+  </main>
+
+  <!-- =========================================================================
+       Footer (Taprobyte + Apple Clean Aesthetic)
+       ========================================================================= -->
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <span style="font-weight:700; color:#101828;">TERRAFORGE AGRO</span>
+        <span>•</span>
+        <span>Sri Lanka Industrial Agronomic Intelligence</span>
+      </div>
+      <div class="footer-links">
+        <a href="../index.html" class="footer-link">Change Territory</a>
+        <a href="javascript:void(0)" class="footer-link" id="footerLinkTab2">Area Selection</a>
+        <a href="javascript:void(0)" class="footer-link" id="footerLinkTab3">Crop Strategy</a>
+        <a href="javascript:void(0)" class="footer-link" id="footerLinkTab4">Crop Calibration</a>
+        <a href="javascript:void(0)" class="footer-link" id="footerLinkTab5">Constraints & Priorities</a>
+        <a href="javascript:void(0)" class="footer-link" id="footerLinkTab6">Industrial Synthesis</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Leaflet JS Library -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Google Maps Places API Configuration Hook (Optional: paste your Google Maps API Key below or pass ?gkey=YOUR_KEY in the URL) -->
+  <script>
+    window.GOOGLE_MAPS_API_KEY = window.GOOGLE_MAPS_API_KEY || '';
+  </script>
+
+  <!-- 1. Dedicated Master Crop Database & Registry -->
+  <script src="../js/modules/crop.js"></script>
+
+  <!-- 2. Structured User Input Data & Backend Integration Model -->
+  <script src="../js/pages/input.js"></script>
+
+  <!-- 3. Workflow, Leaflet Map Demarcation & Industrial Synthesis UI -->
+  <script src="../js/modules/workflow.js"></script>
+</body>
+</html>
