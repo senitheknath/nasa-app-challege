@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from agroshift.assistant import AREA_PRESETS, DEMO_SCENARIOS, LOCATION_PRESETS, SEASON_TEMPLATES
+from agroshift.presets import AREA_PRESETS, DEMO_SCENARIOS, LOCATION_PRESETS, SEASON_TEMPLATES
 from agroshift.decision import CRITERIA
 from agroshift.earth_data import DEFAULT_DB_PATH, get_connection, set_cached
 from agroshift.knowledge import clear_cache, count_crops, crop_categories, knowledge_status

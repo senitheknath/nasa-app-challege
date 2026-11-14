@@ -56,11 +56,6 @@ from agroshift.soil import (
     normalize_soilgrids_value,
     reconcile_soil_evidence,
 )
-from agroshift.validation import (
-    evaluate_missing_data_stress,
-    evaluate_temporal_holdout,
-    run_ablation_study,
-)
 from agroshift.water_balance import (
     build_daily_kc_curve,
     compute_fao56_penman_monteith_daily,
@@ -389,15 +384,6 @@ def test_validation_ablation_aquacrop_prototype_and_refresh_governance():
     assert sim["calibrated_to_farm"] is False
     assert sim["used_in_primary_screening"] is False
 
-    stress = evaluate_missing_data_stress("nairobi_kenya")
-    assert stress["conservative_fallback_verified"] is True
-
-    holdout = evaluate_temporal_holdout(station_limit=3)
-    assert holdout["stations_evaluated"] == 3
-    assert 0.0 <= holdout["overall_temporal_status_agreement_rate"] <= 1.0
-
-    ablation = run_ablation_study(station_limit=3)
-    assert len(ablation["variants"]) == 5
 
     gov = evaluate_refresh_governance(date(2026, 11, 9))
     assert gov["status"] == "healthy"

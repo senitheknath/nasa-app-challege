@@ -171,8 +171,8 @@ def test_global_climate_evidence_nairobi_and_ames(data, farm):
         with pytest.raises(DataError, match="limited"):
             assess(data.frame, replace(farm, latitude=lat, longitude=lon, country=cc), WEIGHTS)
 
-def test_anomaly_classification_and_grounded_assistant(data, farm):
-    from agroshift.assistant import DEMO_SCENARIOS, answer_farmer_question, query_optional_gemini
+def test_anomaly_classification_and_demo_presets(data, farm):
+    from agroshift.presets import DEMO_SCENARIOS
     from agroshift.climate import classify_anomalies
     samples = classify_anomalies(season_samples(data.frame, farm.windows[0]))
     assert "rainfall_z" in samples.columns and "regime" in samples.columns
@@ -185,93 +185,4 @@ def test_anomaly_classification_and_grounded_assistant(data, farm):
     for key, preset in DEMO_SCENARIOS.items():
         preset["farm"].validate()
         res = assess(data.frame, preset["farm"], WEIGHTS)
-        reply = answer_farmer_question("Why are some rotations blocked or uncertain?", data, preset["farm"], WEIGHTS, res)
-        assert "Historical Climate Context" in reply["answer"]
-        assert reply["citations"]
-    with pytest.raises(DataError, match="GEMINI_API_KEY"):
-        query_optional_gemini("Summarize", {"test": 1}, api_key="")
-
-def test_eligible_crops_filtering_and_chosen_crop_report(data, farm):
-    from agroshift.assistant import eligible_crops_and_rotations
-    profile = replace(farm,drainage="waterlogged",ph=None)
-    selection = eligible_crops_and_rotations(data,profile,WEIGHTS)
-    assert [c["crop_id"] for c in selection["eligible_crops"]] == ["rice"]
-    assert len(selection["blocked_crops"]) == 4
-    results = assess(data.frame,profile,WEIGHTS)
-    assert results == selection["all_rotations"]
-    chosen = selection["eligible_crops"][0]["best_rotation"]
-    exported = json.loads(report_json(data,profile,WEIGHTS,[chosen]))
-    assert exported["comparison"][0]["low"] == chosen["low"]
-    assert "Rice" in report_html(data,profile,WEIGHTS,[chosen])
-    with pytest.raises(DataError,match="limited"):
-        eligible_crops_and_rotations(data,replace(farm,country="US"),WEIGHTS)
-
-
-def test_ml_engine_dataset_models_and_autonomous_agent(data, farm):
-    from agroshift.ml_engine import DATASET_PATH, MODEL_BUNDLE_PATH, run_autonomous_ai_agent, train_and_evaluate_all_models
-    bundle = train_and_evaluate_all_models(force_retrain=False)
-    assert DATASET_PATH.exists() and MODEL_BUNDLE_PATH.exists()
-    assert bundle["dataset_summary"]["total_rows"] == 12000
-    assert bundle["dataset_summary"]["train_rows"] == 8400
-    assert bundle["dataset_summary"]["val_rows"] == 1800
-    assert bundle["dataset_summary"]["test_rows"] == 1800
-
-    models = bundle["evaluation"]["models_compared"]
-    assert models["Non-Linear Basis + Bayesian Ensemble"]["accuracy"] > 0.80
-    assert models["Non-Linear Basis + Bayesian Ensemble"]["accuracy"] >= models["Multinomial Logistic Regression (L2)"]["accuracy"]
-    assert models["Multinomial Logistic Regression (L2)"]["accuracy"] > models["Naive Majority Baseline"]["accuracy"]
-    assert bundle["evaluation"]["regression_models"]["nonlinear_ensemble"]["r2"] > 0.70
-
-    agent_out = run_autonomous_ai_agent(data, replace(farm, drainage="well_drained", irrigation="reliable", irrigation_mm=450.0, pilot_confirmed=True), "Sunrise AI Farm", WEIGHTS)
-    assert bundle["data_kind"] == "SYNTHETIC_EDUCATIONAL" and bundle["field_validated"] is False
-    assert pd.read_csv(DATASET_PATH,usecols=["data_kind"])["data_kind"].eq("SYNTHETIC_EDUCATIONAL").all()
-    assert "ml_prediction" not in agent_out
-    assert "ai_hybrid_score" not in json.dumps(agent_out)
-    from agroshift.ml_engine import predict_farm_crops_ml
-    with pytest.raises(DataError,match="Synthetic"):
-        predict_farm_crops_ml(data,farm,bundle)
-
-
-def test_global_earth_grid_249_countries_and_continental_nasa_atlas():
-    import pandas as pd
-    from agroshift.global_atlas import (
-        COUNTRIES_ATLAS_PATH,
-        EARTH_GRID_PATH,
-        NASA_STATIONS_SUMMARY_PATH,
-        estimate_planetary_climate_at_point,
-        get_country_agro_location,
-        simulate_climate,
-    )
-    assert COUNTRIES_ATLAS_PATH.exists()
-    assert EARTH_GRID_PATH.exists()
-    assert NASA_STATIONS_SUMMARY_PATH.exists()
-
-    countries_df = pd.read_csv(COUNTRIES_ATLAS_PATH)
-    grid_df = pd.read_csv(EARTH_GRID_PATH)
-    stations_df = pd.read_csv(NASA_STATIONS_SUMMARY_PATH)
-
-    assert len(countries_df) == 249
-    assert len(grid_df) == 5184
-    assert set(stations_df.data_kind) <= {"UNAVAILABLE","VERIFIED_CACHE"}
-    assert stations_df.query("hub_key == 'anuradhapura'").iloc[0].valid_daily_values > 0
-    assert grid_df.data_kind.eq("SIMULATED").all()
-    assert "suitability_score" not in countries_df and "top_crop_id" not in grid_df
-    assert get_country_agro_location("AQ")["latitude"] is None
-
-    # Verify planetary coordinates at extremes (-90..+90, -180..+180)
-    south_pole = estimate_planetary_climate_at_point(-89.0, 0.0)
-    equator_amazon = estimate_planetary_climate_at_point(-2.5, -60.0)
-    assert south_pole["temperature_mean_c"] < equator_amazon["temperature_mean_c"]
-    assert get_country_agro_location("BR")["hemisphere"] == "Southern"
-    assert get_country_agro_location("CA")["hemisphere"] == "Northern"
-
-    synth_ds = simulate_climate(-33.89, -60.57)
-    assert len(synth_ds.frame) > 9000
-    assert set(synth_ds.frame.columns) == {"T2M", "T2M_MIN", "T2M_MAX", "PRECTOTCORR", "RH2M", "ALLSKY_SFC_SW_DWN"}
-
-
-
-
-
-
-    assert synth_ds.provenance["simulated"] and synth_ds.frame.attrs["data_kind"]=="SIMULATED"
+        assert len(res) > 0

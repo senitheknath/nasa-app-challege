@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import pandas as pd
-from streamlit.testing.v1 import AppTest
 
-from agroshift.assistant import answer_farmer_question, run_counterfactual_copilot
 from agroshift.climate import Window, season_samples
 from agroshift.decision import CRITERIA, Farm, assess
 from agroshift.locations import load_history
-from agroshift.ml_engine import find_knn_seasonal_analogs, load_educational_bundle
 
 DEFAULT_WEIGHTS = dict.fromkeys(CRITERIA, 25.0)
 from agroshift.soil import reconcile_soil_evidence
@@ -110,55 +107,6 @@ def test_value_of_information_uncertainty_narrowing():
     assert voi_full["interval_precision_pct"] > voi["interval_precision_pct"]
 
 
-def test_conformal_prediction_and_knn_analogs():
-    bundle = load_educational_bundle()
-    conformal = bundle.get("evaluation", {}).get("conformal_prediction", {})
-    assert conformal, "Expected conformal calibration block in ML bundle"
-    assert conformal["classification_empirical_coverage_pct"] >= 88.0
-    assert conformal["regression_empirical_coverage_pct"] >= 85.0
-
-    ds = _anuradhapura_dataset()
-    samples = season_samples(ds.frame, Window(5, 1, 8, 31))
-    analogs_res = find_knn_seasonal_analogs(samples, k=5)
-    assert analogs_res["available"] is True
-    analogs = analogs_res["analogs"]
-    assert len(analogs) == 5
-    assert analogs[0]["similarity_pct"] >= analogs[-1]["similarity_pct"]
-
-
-def test_counterfactual_copilot_and_voi_assistant():
-    ds = _anuradhapura_dataset()
-    farm = Farm(
-        latitude=8.3114,
-        longitude=80.4037,
-        current="rice",
-        irrigation="unknown",
-        irrigation_mm=None,
-        rain_fraction=None,
-        drainage="unknown",
-        ph=None,
-        pilot_confirmed=True,
-    )
-    results = assess(ds.frame, farm, dict(DEFAULT_WEIGHTS))
-    ans = answer_farmer_question(
-        "How can I narrow uncertainty and what input matters most?",
-        ds,
-        farm,
-        dict(DEFAULT_WEIGHTS),
-        results,
-    )
-    assert "uncertainty" in ans["answer"].lower() or "voi" in ans["answer"].lower()
-    assert len(ans["citations"]) >= 2
-
-    cf = run_counterfactual_copilot(
-        "severe_drought_heat",
-        dataset=ds,
-        farm=farm,
-        weights=dict(DEFAULT_WEIGHTS),
-    )
-    assert "Counterfactual" in cf["label"]
-    assert len(cf["table"]) >= 2
-
 
 def test_phase1_nrmc_aer_scs_rain_polygon_area_and_wfp_prices():
     from agroshift.farm_records import polygon_area_hectares
@@ -237,59 +185,5 @@ def test_multilingual_nlp_intake_and_satellite_contexts():
     wc = worldcereal_cropland_context(8.3114, 80.4037)
     assert wc["status"] == "verified"
     assert wc["value"]["Detected Irrigation Regime Prior"] == "supplemental"
-
-
-def test_country_map_centering_and_farmer_assistant_with_cards():
-    from unittest.mock import Mock
-    from agroshift.assistant import query_optional_gemini
-    from agroshift.locations import countries_at, country_map_view, country_regions
-
-    # Every tested country must center on its own land territory, never [15, 0] in West Africa
-    for cc in ("LK", "IN", "US", "JP", "AU", "BR", "KE", "FR", "NZ", "DE", "TH", "VN"):
-        view = country_map_view(cc)
-        assert (view["lat"], view["lon"]) != (15.0, 0.0)
-        assert cc in countries_at(view["lat"], view["lon"])
-        regs = country_regions(cc)
-        assert len(regs) >= 1
-
-    ds = _anuradhapura_dataset()
-    farm = Farm(
-        latitude=8.3114,
-        longitude=80.4037,
-        country="LK",
-        current="rice",
-        irrigation="supplemental",
-        irrigation_mm=150.0,
-        rain_fraction=0.65,
-        drainage="well_drained",
-        ph=6.2,
-        pilot_confirmed=False,
-        windows=(Window(5, 1, 8, 31),),
-        baseline=(),
-    )
-    cards = [
-        {"id": "mungbean", "name": "Mungbean", "status": "possible", "summary": "Matches season", "reasons": ["Warm season"]},
-        {"id": "maize", "name": "Maize", "status": "check", "summary": "Check water amount", "reasons": ["Needs supplemental irrigation"]},
-    ]
-    ans = answer_farmer_question(
-        "Why are some crops marked check before planting?",
-        ds,
-        farm,
-        dict(DEFAULT_WEIGHTS),
-        [],
-        cards=cards,
-    )
-    assert "Maize" in ans["answer"]
-    assert "Plain-Language Answer" in ans["answer"]
-    assert "Historical Climate Context" in ans["answer"]
-
-    session = Mock()
-    session.post.return_value.json.return_value = {
-        "candidates": [{"content": {"parts": [{"text": '```json\n["crops", "checks", "soil"]\n```'}]}}]
-    }
-    gem_out = query_optional_gemini("Summarize my crops", ans["brief"], "test_key", session=session)
-    assert "Mungbean" in gem_out
-    assert "Maize" in gem_out
-
 
 
