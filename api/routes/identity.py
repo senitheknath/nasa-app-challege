@@ -12,6 +12,7 @@ from agroshift.identity import (
     list_user_farms,
     save_user_farm,
 )
+from agroshift.earth_data.satellite import normalize_boundary
 
 from api.deps import get_required_auth_user, json_response
 
@@ -73,7 +74,7 @@ async def farms_save(request: Request) -> Response:
         payload = await request.json()
         name = str(payload.get("name") or "My Farm")
         farm_data = payload.get("farm") or payload
-        boundary = payload.get("boundary")
+        boundary = normalize_boundary(payload.get("boundary") or payload.get("parcel"))
         farm_id = payload.get("id")
         if "farm_id" in request.path_params:
             farm_id = int(request.path_params["farm_id"])

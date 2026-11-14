@@ -169,3 +169,36 @@ def resolve_farm(request: Request, payload: dict[str, Any]) -> Farm:
             merged["windows"] = payload["windows"]
         return parse_farm(merged)
     return parse_farm(payload)
+
+
+def resolve_farm_context(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve location, area_ha, and boundary from either saved farm_id or inline payload."""
+    farm_id = payload.get("farm_id")
+    if farm_id is not None:
+        user = get_optional_auth_user(request)
+        if not user:
+            raise ValueError("Authentication required to load a saved farm by farm_id.")
+        saved = next((f for f in list_user_farms(user["id"]) if f["id"] == int(farm_id)), None)
+        if not saved:
+            raise ValueError(f"Saved farm #{farm_id} not found for current user.")
+        farm_dict = saved.get("farm") or {}
+        return {
+            "farm_id": saved["id"],
+            "name": saved.get("name"),
+            "country": str(payload.get("country") or farm_dict.get("country") or "LK").upper(),
+            "latitude": float(payload.get("latitude", farm_dict["latitude"])),
+            "longitude": float(payload.get("longitude", farm_dict["longitude"])),
+            "area_ha": payload.get("area_ha", payload.get("areaHectares", farm_dict.get("area_ha"))),
+            "boundary": payload.get("boundary") or payload.get("parcel") or saved.get("boundary"),
+            "bbox": payload.get("bbox"),
+        }
+    return {
+        "farm_id": None,
+        "name": None,
+        "country": str(payload.get("country", "LK")).upper(),
+        "latitude": float(payload["latitude"]),
+        "longitude": float(payload["longitude"]),
+        "area_ha": payload.get("area_ha", payload.get("areaHectares")),
+        "boundary": payload.get("boundary") or payload.get("parcel"),
+        "bbox": payload.get("bbox"),
+    }
