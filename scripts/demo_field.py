@@ -138,11 +138,15 @@ def run_demo(lat: float, lon: float, country: str, boundary: dict | None, window
             s1 = p["season_1"]
             s2 = p["season_2"]
             status = p["overall_status"].upper()
-            print(f"\n  [{idx}] {p['name']} --> {status}")
+            score = p.get("score", 0.0)
+            rating = p.get("rating", "N/A")
+            rank = p.get("rank", idx)
+            comp = p.get("components", {})
+            print(f"\n  [#{rank}] {p['name']} --> {status} | Score: {score}/100 [{rating}]")
+            print(f"      Rating Breakdown: Climate {comp.get('climate_suitability')}/40 | Transition {comp.get('transition_synergy')}/35 | Timeline {comp.get('timeline_efficiency')}/25")
             print(f"      S1: {s1['crop_name']} ({s1['family']}) [{s1['window']}]")
             print(f"      S2: {s2['crop_name']} ({s2['family']}) [{s2['window']}]")
             print(f"      Summary: {p['summary']}")
-
             # Print exact timeline milestones
             tl = p.get("timeline", {})
             tb = tl.get("turnaround_summary", {})
