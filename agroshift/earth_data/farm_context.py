@@ -65,20 +65,12 @@ def location_context(country, latitude, longitude, *, offline=False):
 
 
 def capabilities(farm, dataset, cards):
-    from agroshift.earth_data.geography import pilot_scope
-
     environmental = (
         dataset is not None
         and dataset.provenance.get("data_kind") in {"REAL", "VERIFIED_CACHE"}
         and dataset.provenance.get("simulated") is False
     )
-    regional = bool(
-        farm
-        and len(farm.windows) == 2
-        and pilot_scope(
-            farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed
-        )
-    )
+    regional = bool(farm and len(farm.windows) == 2 and environmental)
     return {
         "A": {
             "label": "Environmental history",

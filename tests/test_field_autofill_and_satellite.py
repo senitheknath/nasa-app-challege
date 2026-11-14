@@ -139,12 +139,14 @@ def test_earth_data_api_endpoints_integration():
 
 
 def test_auth_and_farm_crud_integration(tmp_path: Path):
+    import uuid
     client = TestClient(app)
+    email = f"tester-{uuid.uuid4().hex[:8]}@agroshift.dev"
 
     # 1. Register
     res = client.post(
         "/api/auth/register",
-        json={"email": "tester@agroshift.dev", "password": "pass1234", "display_name": "Test Farmer"},
+        json={"email": email, "password": "pass1234", "display_name": "Test Farmer"},
     )
     assert res.status_code == 200
     token = res.json()["token"]
@@ -153,8 +155,7 @@ def test_auth_and_farm_crud_integration(tmp_path: Path):
     # 2. Check /api/auth/me
     me = client.get("/api/auth/me", headers=headers)
     assert me.status_code == 200
-    assert me.json()["user"]["email"] == "tester@agroshift.dev"
-
+    assert me.json()["user"]["email"] == email
     # 3. Save Farm
     save_res = client.post(
         "/api/farms",

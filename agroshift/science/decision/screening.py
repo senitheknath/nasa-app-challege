@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 
 from agroshift.science.decision.decision import CROPS, CRITERIA, KNOWLEDGE, MIN_SEASONS, assess, verify_climate
-from agroshift.earth_data.geography import pilot_scope
 from agroshift.science.knowledge.knowledge import global_traits, screening_candidates
 from agroshift.science.climate.power import DataError
 
@@ -169,68 +168,6 @@ def _make_general_card(crop, traits, farm, window, daily_years, typical_day, rai
                 assessed=assessed, unknown=missing)
 
 
-def _regional_cards(farm, frame, weights):
-    options = {}
-    for row in assess(frame, farm, weights):
-        slot = row["slots"][0]
-        key = slot["crop_id"]
-        if key in options or key not in farm.allowed:
-            continue
-        crop = CROPS[key]
-        parts = slot["components"]
-        constraints = []
-        for warning in slot["constraints"]:
-            if "waterlogging" in warning.lower():
-                constraints.append("This crop needs a field that drains between rains.")
-            elif "earliest harvest" in warning:
-                constraints.append("The growing window is too short for the cited variety.")
-            else:
-                constraints.append(warning)
-
-        temperature = parts["temperature"]
-        temp_fit = temperature["assessed"] and temperature["low"] == 1
-        mixed_temperature = temperature["assessed"] and 0 < temperature["low"] < 1
-        reason = "Check the variety and soil before planting."
-        summary, status = "Check local conditions", "check"
-        if temp_fit:
-            reason = "All assessed seasons averaged within this crop's preferred temperatures."
-        if farm.ph is not None and crop["ph_preferred"] and not crop["ph_preferred"][0] <= farm.ph <= crop["ph_preferred"][1]:
-            constraints.append("Your soil pH falls outside the local preferred range.")
-        if slot["constraints"]:
-            summary, status, reason = "Unsuitable for the conditions reported", "blocked", constraints[0]
-        elif constraints:
-            summary, status, reason = "Outside a preferred range", "outside", constraints[0]
-        elif mixed_temperature:
-            reason = "Some past seasons were outside this crop's preferred temperatures."
-            summary = "Temperatures vary by year"
-        elif temperature["assessed"] and not temp_fit:
-            summary, status, reason = "Outside a preferred range", "outside", "Past seasonal averages were outside the local temperature range."
-        elif temp_fit or (crop["requires_drainage"] and farm.drainage == "well_drained"):
-            summary, status = "Some field conditions fit", "possible"
-            if not temp_fit:
-                reason = "The drainage you reported fits this crop."
-        water = "Water supply still needs checking."
-        details = [p["reason"] for p in parts.values()]
-        if key == "rice":
-            water = "Check water for land preparation and ponding."
-        elif crop["water_mm"] and farm.rain_fraction is not None and farm.irrigation_mm is not None:
-            demand = parts["water"]
-            if demand["high"] < 1:
-                water = "Estimated supply falls below the crop-use range."
-                if status == "possible":
-                    summary, status, reason = "Check your water supply", "check", water
-            else:
-                water = "The estimated water supply may cover crop use."
-        if crop["duration_days"] and key == "mung_bean" and farm.mung_cultivar != "MI 6":
-            details.append("The published harvest timing applies to MI 6. Confirm your variety.")
-        sources = [KNOWLEDGE["sources"][sid] for sid in slot["sources"]]
-        options[key] = dict(id=key, name=crop["name"], summary=summary, water=water,
-                            reason=reason, constraints=constraints, details=details, sources=[*sources, POWER_SOURCE],
-                            support="regional", status=status,
-                            assessed=[k for k,p in parts.items() if p["assessed"]],
-                            unknown=[k+" fit" for k,p in parts.items() if not p["assessed"]]+["local pests and field performance"])
-    return list(options.values())
-
 
 def find_options(farm, dataset, *, weights=None):
     """Build JSON-ready cards for the first selected window. Missing evidence earns no credit."""
@@ -247,9 +184,6 @@ def find_options(farm, dataset, *, weights=None):
     rain = pd.Series(rainfall, dtype=float)
     typical = float(pd.Series([d.median() for d in days]).median()) if len(days) >= MIN_SEASONS else None
     cards = []
-    regional = len(farm.windows) == 2 and pilot_scope(farm.latitude, farm.longitude, farm.country, farm.pilot_confirmed)
-    if regional:
-        cards.extend(_regional_cards(farm, frame, {k: 1 for k in CRITERIA} if weights is None else weights))
     by_crop = defaultdict(dict)
     for trait in global_traits():
         name = trait["trait"]
@@ -260,8 +194,6 @@ def find_options(farm, dataset, *, weights=None):
         by_crop[trait["crop_id"]][name] = trait
     for crop in screening_candidates(by_crop):
         key = crop["id"]
-        if regional and key in CROPS:
-            continue
         cards.append(_make_general_card(crop, by_crop[key], farm, window, days, typical,
                                         float(rain.median()) if len(rain) else None, len(rain) >= MIN_SEASONS))
     # Ties are alphabetical for browsing; a single matching trait cannot establish a best crop.
