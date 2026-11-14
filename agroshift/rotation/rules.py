@@ -3,20 +3,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .contracts import CropProfile, RotationConfig, RuleFinding
+from .contracts import CropProfile, EnvironmentContext, RotationConfig, RuleFinding
 
-# Rule signature: (first, second, previous, w1, w2, config) -> list[RuleFinding]
-TransitionRule = Callable[
-    [
-        CropProfile,
-        CropProfile,
-        CropProfile | None,
-        Any,
-        Any,
-        RotationConfig,
-    ],
-    list[RuleFinding],
-]
+# Rule signature: (first, second, previous, w1, w2, config, env?) -> list[RuleFinding]
+TransitionRule = Callable[..., list[RuleFinding]]
 
 
 def window_overlap_days(w1: Any, w2: Any) -> int:
@@ -194,10 +184,97 @@ def rule_drainage_transition(
     return []
 
 
+def rule_pathogen_carryover(
+    first: CropProfile,
+    second: CropProfile,
+    _prev: CropProfile | None,
+    _w1: Any,
+    _w2: Any,
+    _cfg: RotationConfig,
+    _env: EnvironmentContext | None = None,
+) -> list[RuleFinding]:
+    """Flag shared pathogens and pest host overlap between consecutive crops."""
+    if not (first.pests and second.pests):
+        return []
+    shared = sorted(first.pests & second.pests)
+    if shared:
+        return [
+            RuleFinding(
+                "pest_pathogen_overlap",
+                "caution",
+                f"Consecutive crops share common pathogens ({', '.join(shared[:3])}); "
+                "host continuity elevates disease and pest carryover risk.",
+            )
+        ]
+    return []
+
+
+def rule_nutrient_balance(
+    first: CropProfile,
+    second: CropProfile,
+    _prev: CropProfile | None,
+    _w1: Any,
+    _w2: Any,
+    cfg: RotationConfig,
+    _env: EnvironmentContext | None = None,
+) -> list[RuleFinding]:
+    """Evaluate macronutrient depletion and biological nitrogen replenishment."""
+    findings: list[RuleFinding] = []
+    f_heavy = first.nutrient_demand == "heavy" or first.family in cfg.heavy_feeding_families
+    s_heavy = second.nutrient_demand == "heavy" or second.family in cfg.heavy_feeding_families
+
+    if f_heavy and second.is_nitrogen_fixer:
+        findings.append(
+            RuleFinding(
+                "nutrient_replenishment",
+                "benefit",
+                f"Following heavy-feeding {first.name} with nitrogen-fixing {second.name} "
+                "supports biological nitrogen fixation and restores soil fertility.",
+            )
+        )
+    elif f_heavy and s_heavy and first.family != second.family:
+        findings.append(
+            RuleFinding(
+                "consecutive_heavy_feeders",
+                "caution",
+                f"Successive heavy-feeding crops ({first.name} followed by {second.name}) compound "
+                "subsoil nitrogen and potassium extraction without a restorative fallow or legume break.",
+            )
+        )
+    return findings
+
+
+def rule_water_deficit_carryover(
+    first: CropProfile,
+    second: CropProfile,
+    _prev: CropProfile | None,
+    _w1: Any,
+    _w2: Any,
+    _cfg: RotationConfig,
+    env: EnvironmentContext | None = None,
+) -> list[RuleFinding]:
+    """Evaluate root-zone water depletion carryover under water-limited regimes."""
+    if env is None or env.irrigation != "rainfed":
+        return []
+    if first.kc_max and first.kc_max >= 1.15 and second.kc_max and second.kc_max >= 1.15:
+        return [
+            RuleFinding(
+                "water_deficit_carryover",
+                "caution",
+                f"Consecutive high-water-demand crops ({first.name} and {second.name}) under rainfed conditions "
+                "risk cumulative root-zone moisture exhaustion; check seasonal rainfall buffer.",
+            )
+        ]
+    return []
+
+
 DEFAULT_RULES: tuple[TransitionRule, ...] = (
     rule_lifecycle,
     rule_window_turnaround,
     rule_family_succession,
     rule_rooting_depth,
     rule_drainage_transition,
+    rule_pathogen_carryover,
+    rule_nutrient_balance,
+    rule_water_deficit_carryover,
 )
