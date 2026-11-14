@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="480" y1="0" x2="480" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C9E2D9"/>
+      <stop offset="1" stop-color="#8DBB85"/>
+    </linearGradient>
+    <linearGradient id="soil" x1="480" y1="240" x2="480" y2="600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A98154"/>
+      <stop offset="1" stop-color="#3D5938"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h960v600H0z"/>
+  <path fill="#658D66" d="M0 260c148-61 265-72 480-72s332 11 480 72v340H0z"/>
+  <path fill="url(#soil)" d="M0 310c172-42 332-62 480-62s308 20 480 62v290H0z"/>
+  <g stroke="#D3B17C" stroke-width="13" opacity=".72">
+    <path d="M-50 600 400 270M120 600l405-330m-225 330 350-330m-125 330 295-330m-60 330 240-270"/>
+  </g>
+  <g stroke="#416C43" stroke-width="5" opacity=".92">
+    <path d="M0 366c181-45 341-67 480-67s299 22 480 67M0 440c181-45 341-67 480-67s299 22 480 67M0 518c181-45 341-67 480-67s299 22 480 67"/>
+  </g>
+  <path d="m165 337 158-42 123 37-158 45z" fill="#D9E7C8" fill-opacity=".24" stroke="#F0F6E8" stroke-width="3" stroke-dasharray="9 9"/>
+  <g transform="translate(612 318)">
+    <path d="M20 35h95l28 30v28H20z" fill="#D9A945"/>
+    <path d="M42 14h48l12 28H42z" fill="#426951"/>
+    <path d="M101 43h17l19 22h-36z" fill="#A9C3A8"/>
+    <circle cx="49" cy="99" r="19" fill="#203B2C"/>
+    <circle cx="49" cy="99" r="8" fill="#D9E2C9"/>
+    <circle cx="117" cy="99" r="14" fill="#203B2C"/>
+    <circle cx="117" cy="99" r="6" fill="#D9E2C9"/>
+  </g>
+</svg>

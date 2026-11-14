@@ -91,6 +91,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     initHighlightedSearch();
+    initAgroVideoCards();
   });
 
   function initHighlightedSearch() {
@@ -247,6 +248,41 @@
         });
       }
     }
+  }
+
+  /**
+   * Video Card Widget Interactive Player Swap
+   */
+  function initAgroVideoCards() {
+    const cards = document.querySelectorAll('.agro-glass-card');
+    cards.forEach(card => {
+      const playBtn = card.querySelector('.agro-play-btn');
+      const bannerWrap = card.querySelector('.agro-banner-wrap');
+      const videoSrc = card.getAttribute('data-video-src') || 'assets/agro.webm';
+
+      if (!playBtn || !bannerWrap) return;
+
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        // Pause/stop any other video playing across cards
+        document.querySelectorAll('.agro-video-player').forEach(v => {
+          try { v.pause(); } catch (_) {}
+        });
+
+        // Swap out poster image & play button for the inline responsive player
+        bannerWrap.innerHTML = `
+          <video class="agro-video-player" src="${videoSrc}" autoplay controls playsinline>
+            Your browser does not support the video tag.
+          </video>
+        `;
+
+        const newVideo = bannerWrap.querySelector('video');
+        if (newVideo) {
+          newVideo.play().catch(() => {});
+        }
+      });
+    });
   }
 
 })();

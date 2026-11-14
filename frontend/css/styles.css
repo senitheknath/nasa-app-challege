@@ -5,6 +5,9 @@
    ========================================================================== */
 
 :root {
+  /* Dynamic Glass Blur Variable */
+  --vid-card-blur: 14px;
+
   /* Extracted Green Spectrum */
   --c-deep-forest: #155239;   /* Swatch 1 - Deep Forest Emerald */
   --c-primary:     #187741;   /* Swatch 2 - Agricultural Pine */
@@ -102,10 +105,10 @@ body {
   position: sticky;
   top: 0;
   z-index: 1000;
-  background: var(--bg-translucent);
-  backdrop-filter: blur(24px) saturate(190%);
+  background: none;
+  backdrop-filter: none;
   -webkit-backdrop-filter: blur(24px) saturate(190%);
-  border-bottom: 1px solid var(--border-hairline);
+  border-bottom: none;
   transition: all var(--transition-base);
 }
 
@@ -282,20 +285,22 @@ body {
 }
 
 .highlighted-search-box {
-  background: #FFFFFF;
-  border: 2px solid var(--c-accent); /* #38C172 from user palette */
+  background: rgba(255, 255, 255, 0.142);
+  backdrop-filter: blur(var(--vid-card-blur));
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid rgba(255, 255, 255, 0.299);
   border-radius: var(--radius-full);
   padding: 0.35rem 0.45rem 0.35rem 1.35rem;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  box-shadow: 0 0 0 4px rgba(56, 193, 114, 0.22), 0 8px 24px -4px rgba(24, 119, 65, 0.16);
+  box-shadow: 0 0 0 4px rgba(163, 172, 167, 0.087), 0 8px 24px -4px rgba(24, 119, 65, 0.16);
   transition: all var(--transition-fast);
 }
 
 .highlighted-search-box:focus-within {
   border-color: var(--c-primary);
-  box-shadow: 0 0 0 6px rgba(56, 193, 114, 0.32), 0 12px 32px -4px rgba(21, 82, 57, 0.22);
+  box-shadow: 0 0 0 6px rgba(190, 190, 190, 0.183), 0 12px 32px -4px rgba(21, 82, 57, 0.22);
   transform: translateY(-1px);
 }
 
@@ -587,8 +592,10 @@ body {
 
 /* Floating Workflow Stage Tracker - Pure Single Row, No Scroll Slider */
 .stage-tracker-bar {
-  background: #FFFFFF;
-  border: 1px solid #E5E7EB;
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(var(--vid-card-blur));
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid #e5e7eb87;
   border-radius: var(--radius-full);
   padding: 0.4rem 1.25rem;
   display: flex;
@@ -644,13 +651,13 @@ body {
 }
 
 .stage-step.active .stage-number {
-  background: var(--c-accent);
-  color: #FFFFFF;
+  background: #1877416a;
+  color: #ffffff93;
 }
 
 .stage-step.completed .stage-number {
   background: var(--c-primary);
-  color: #FFFFFF;
+  color: #ffffff93;
 }
 
 .stage-divider {
@@ -757,7 +764,7 @@ body {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  background: #FFFFFF;
+  background: #ffffff94;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
@@ -831,7 +838,7 @@ body {
 .quick-country-chip.active {
   background: var(--c-deep-forest);
   border-color: var(--c-deep-forest);
-  color: #FFFFFF;
+  color: #ffffff98;
   box-shadow: 0 2px 8px rgba(21, 82, 57, 0.3);
 }
 
@@ -2516,6 +2523,7 @@ body {
   margin-bottom: 1.1rem;
 }
 
+
 .drawer-notice-box.rotation {
   border-left-color: #0284C7;
 }
@@ -2787,5 +2795,434 @@ body {
     box-shadow: none !important;
     break-inside: avoid;
     margin-bottom: 1.5rem !important;
+  }
+}
+
+/* ==========================================================================
+   Full-Screen Looped Video Background (Landing Page)
+   ========================================================================== */
+
+body.has-video-bg {
+  background-color: #0F291E;
+}
+
+.bg-video-wrapper {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bg-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  transform: scale(1.02); /* Prevents soft edge bleed */
+  filter: saturate(1.1) contrast(1.03);
+}
+
+/* Cinematic gradient overlay matching the Agrovia sky-to-crop contrast */
+.bg-video-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(12, 32, 48, 0.25) 0%,
+    rgba(15, 56, 34, 0.30) 48%,
+    rgba(10, 28, 18, 0.65) 100%
+  );
+}
+
+/* Translucent Glass Header over Video */
+body.has-video-bg .app-navbar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: none;
+}
+
+body.has-video-bg .brand-title {
+  color: #FFFFFF;
+}
+
+body.has-video-bg .brand-subtitle {
+  color: var(--c-mint-light);
+}
+
+/* Crisp White Hero Typography over Video */
+body.has-video-bg .hero-badge-pill {
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #FFFFFF;
+}
+
+body.has-video-bg .hero-section {
+  padding: 1.4rem 1.25rem 0.25rem;
+}
+
+body.has-video-bg .hero-title {
+  color: #FFFFFF;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.22);
+  font-size: clamp(1.85rem, 3.2vw, 2.5rem);
+  margin-bottom: 0.35rem;
+}
+
+body.has-video-bg .hero-title .text-gradient {
+  color: var(--c-mint-light);
+}
+
+body.has-video-bg .hero-description {
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin-bottom: 0.9rem;
+  max-width: 720px;
+}
+
+/* Frosted Glass Search Box, Stage Tracker & Feature Cards over Video */
+body.has-video-bg .highlighted-search-box {
+  background: var(--vid-card-bg);
+  backdrop-filter: blur(var(--vid-card-blur));
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid var(--vid-card-border);
+  box-shadow: var(--vid-card-shadow);
+}
+
+body.has-video-bg .highlighted-search-box:focus-within {
+  border-color: var(--c-mint-light);
+  outline: 1px solid rgba(168, 238, 193, 0.36);
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 3px rgba(168, 238, 193, 0.12),
+    0 0 18px 3px rgba(168, 238, 193, 0.18),
+    var(--vid-card-shadow);
+}
+
+body.has-video-bg .highlighted-search-icon {
+  color: var(--c-mint-light);
+}
+
+body.has-video-bg .highlighted-search-input {
+  color: #FFFFFF;
+}
+
+body.has-video-bg .highlighted-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+body.has-video-bg .highlighted-dropdown-list {
+  background: linear-gradient(
+    135deg,
+    rgba(224, 242, 254, 0.381),
+    rgba(255, 255, 255, 0.397)
+  );
+  backdrop-filter: blur(50px);
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid rgba(147, 197, 253, 0.58);
+  outline: 1px solid rgba(147, 197, 253, 0.24);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 18px 2px rgba(147, 197, 253, 0.16),
+    var(--vid-card-shadow);
+}
+
+body.has-video-bg .country-option-item {
+  border-bottom-color: rgba(21, 82, 57, 0.12);
+}
+
+body.has-video-bg .country-option-item:hover,
+body.has-video-bg .country-option-item.selected {
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--c-deep-forest);
+}
+
+body.has-video-bg .stage-tracker-bar {
+  background: var(--vid-card-bg);
+  backdrop-filter: blur(var(--vid-card-blur));
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid var(--vid-card-border);
+  box-shadow: var(--vid-card-shadow);
+}
+
+body.has-video-bg .stage-step {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+body.has-video-bg .stage-step.active {
+  background: rgba(227, 252, 236, 0.9);
+  color: var(--c-deep-forest);
+}
+
+body.has-video-bg .stage-step.active .stage-number {
+  background: rgba(24, 119, 65, 0.72);
+  color: #FFFFFF;
+}
+
+body.has-video-bg .stage-step:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+body.has-video-bg .stage-step.completed {
+  color: var(--c-mint-light);
+}
+
+body.has-video-bg .stage-number {
+  background: rgba(255, 255, 255, 0.16);
+  color: #FFFFFF;
+}
+
+body.has-video-bg .stage-divider {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* Frosted translucent glass card — only the background is transparent, text stays 100% solid */
+body.has-video-bg .landing-highlight-card {
+  background: rgba(255, 255, 255, 0.72); /* Lower the 0.72 number (e.g. 0.55) for more transparency */
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+}
+
+body.has-video-bg .landing-highlight-card:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* Glass Footer over Video */
+body.has-video-bg .app-footer {
+  background: rgba(16, 24, 40, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+body.has-video-bg .footer-inner {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+body.has-video-bg .footer-brand-name {
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+body.has-video-bg .footer-link {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+body.has-video-bg .footer-link:hover {
+  color: var(--c-mint-light);
+}
+
+.demo-bg {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* Rich green agricultural background to showcase the glass effect */
+  background: linear-gradient(135deg, #2d3e1e 0%, #152418 50%, #3a4f25 100%);
+}
+
+/* =========================================================================
+   Agricultural Lifecycle Video Card Widgets
+   ========================================================================= */
+:root {
+  --vid-card-bg: rgba(142, 142, 142, 0.224);
+  --vid-card-border: rgba(255, 255, 255, 0.20);
+  --vid-card-radius: 22px;
+  --vid-thumb-radius: 14px;
+  --vid-card-blur: 10px;
+  --vid-card-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  --vid-play-bg: rgba(168, 238, 193, 0.42);
+  --vid-play-hover: rgba(168, 238, 193, 0.70);
+}
+
+.agro-widget-container {
+  width: min(1040px, 100%);
+  margin: 0.35rem auto 1.8rem;
+  padding: 0 1rem;
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 320px));
+  justify-content: center;
+  align-items: stretch;
+  gap: 1.15rem;
+}
+
+.agro-glass-card {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  font-family: "Inter", sans-serif;
+  font-weight: 300;
+  padding: 14px;
+  background: var(--vid-card-bg);
+  backdrop-filter: blur(var(--vid-card-blur));
+  -webkit-backdrop-filter: blur(var(--vid-card-blur));
+  border: 1px solid var(--vid-card-border);
+  border-radius: var(--vid-card-radius);
+  box-shadow: var(--vid-card-shadow);
+  box-sizing: border-box;
+  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1), 
+              border-color 0.25s ease, 
+              box-shadow 0.25s ease;
+}
+
+.agro-glass-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.667);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+}
+
+.agro-banner-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--vid-thumb-radius);
+  overflow: hidden;
+  background: #173824;
+}
+
+.agro-banner-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.35s ease;
+}
+
+.agro-glass-card:hover .agro-banner-img {
+  transform: scale(1.035);
+}
+
+/* Accessible Circular Play Button */
+.agro-play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: var(--vid-play-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  z-index: 2;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 0.2s ease,
+              box-shadow 0.2s ease;
+}
+
+.agro-play-btn:hover {
+  transform: translate(-50%, -50%) scale(1.08);
+  background-color: var(--vid-play-hover);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.agro-play-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 3px;
+}
+
+.agro-play-icon {
+  width: 18px;
+  height: 18px;
+  fill: #ffffff;
+  margin-left: 2px;
+}
+
+/* Swapped Video Player */
+.agro-video-player {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: var(--vid-thumb-radius);
+  background: #000000;
+}
+
+/* Card Body Typography */
+.agro-card-body {
+  flex: 1;
+  padding: 12px 2px 2px;
+  display: flex;
+  flex-direction: column;
+}
+
+.agro-badge {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 0.62rem;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  color: #e8e8e8bb;
+  background: rgba(223, 223, 223, 0.12);
+  border: 1px solid rgba(199, 199, 199, 0.24);
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  margin-bottom: 0.45rem;
+}
+
+.agro-card-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 300;
+  line-height: 1.3;
+  color: #ffffffdf;
+  letter-spacing: -0.01em;
+}
+
+.agro-card-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 300;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 960px) {
+  .agro-widget-container {
+    grid-template-columns: repeat(2, minmax(0, 320px));
+  }
+}
+
+@media (max-width: 650px) {
+  .agro-widget-container {
+    grid-template-columns: minmax(0, 320px);
+    gap: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agro-glass-card,
+  .agro-banner-img,
+  .agro-play-btn {
+    transition: none;
+  }
+
+  .agro-glass-card:hover,
+  .agro-play-btn:hover {
+    transform: none;
   }
 }

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="480" y1="0" x2="480" y2="600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B9D9D4"/>
+      <stop offset="1" stop-color="#46765A"/>
+    </linearGradient>
+    <linearGradient id="field" x1="480" y1="210" x2="480" y2="600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#83A96D"/>
+      <stop offset="1" stop-color="#244E36"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h960v600H0z"/>
+  <path fill="#779A78" d="M0 202 178 98l179 112 155-135 174 133 146-89 128 66v151H0z" opacity=".52"/>
+  <path fill="#496F50" d="m0 267 154-76 169 89 153-109 179 103 154-76 151 73v329H0z"/>
+  <path fill="url(#field)" d="M0 332c181-42 344-63 480-63s299 21 480 63v268H0z"/>
+  <path d="M0 600 361 271m72 329 47-330m480 330L599 271M0 450c178-47 338-69 480-69s302 22 480 69M0 523c178-47 338-69 480-69s302 22 480 69" stroke="#C1D89B" stroke-opacity=".56" stroke-width="5"/>
+  <path d="M198 367 478 297l278 70-278 81z" fill="#A8D9A5" fill-opacity=".12" stroke="#E0F3C4" stroke-width="3" stroke-dasharray="10 10"/>
+  <circle cx="736" cy="112" r="34" fill="#F2D992" fill-opacity=".88"/>
+  <g stroke="#EAF5E8" stroke-linecap="round" stroke-width="5" opacity=".9">
+    <path d="m692 113-44-11m50-24-32-31m71 54 44-11m-50 47 32 31"/>
+  </g>
+</svg>
