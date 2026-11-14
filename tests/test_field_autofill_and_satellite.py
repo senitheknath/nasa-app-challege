@@ -93,7 +93,7 @@ def test_field_autofill_derivation():
     assert autofill["drainage"]["can_override"] is True
 
 
-def test_site_api_endpoint_integration():
+def test_earth_data_api_endpoints_integration():
     client = TestClient(app)
     poly = {
         "type": "Polygon",
@@ -107,8 +107,8 @@ def test_site_api_endpoint_integration():
             ]
         ],
     }
-    resp = client.post(
-        "/api/site",
+    auto_resp = client.post(
+        "/api/earth-data/autofill",
         json={
             "country": "LK",
             "latitude": 8.3114,
@@ -117,13 +117,23 @@ def test_site_api_endpoint_integration():
             "offline": True,
         },
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "autofill" in body
-    assert "satellite_monitoring" in body
-    assert body["autofill"]["area_ha"]["value"] == 30.59
-    assert len(body["satellite_monitoring"]["layers"]) == 3
-    assert body["satellite_monitoring"]["overpass_schedule"]["acquisitions_count"] >= 2
+    assert auto_resp.status_code == 200
+    auto_body = auto_resp.json()
+    assert auto_body["autofill"]["area_ha"]["value"] == 30.59
+
+    sat_resp = client.post(
+        "/api/earth-data/satellite",
+        json={
+            "latitude": 8.3114,
+            "longitude": 80.4037,
+            "boundary": poly,
+            "offline": True,
+        },
+    )
+    assert sat_resp.status_code == 200
+    sat_body = sat_resp.json()
+    assert len(sat_body["layers"]) == 3
+    assert sat_body["overpass_schedule"]["acquisitions_count"] >= 2
 
 
 def test_auth_and_farm_crud_integration(tmp_path: Path):
@@ -148,7 +158,7 @@ def test_auth_and_farm_crud_integration(tmp_path: Path):
         "/api/farms",
         json={
             "name": "Anuradhapura Field A",
-            "farm": {"country": "LK", "latitude": 8.31, "longitude": 80.40, "area_ha": 2.5},
+            "farm": {"country": "LK", "latitude": 8.3114, "longitude": 80.4037, "area_ha": 2.5},
             "boundary": None,
         },
         headers=headers,
@@ -156,17 +166,38 @@ def test_auth_and_farm_crud_integration(tmp_path: Path):
     assert save_res.status_code == 200
     farm_id = save_res.json()["farm"]["id"]
 
-    # 4. List Farms
+    # 4. List & Get Farm
     list_res = client.get("/api/farms", headers=headers)
     assert list_res.status_code == 200
     assert len(list_res.json()["farms"]) == 1
     assert list_res.json()["farms"][0]["name"] == "Anuradhapura Field A"
 
-    # 5. Delete Farm
+    get_res = client.get(f"/api/farms/{farm_id}", headers=headers)
+    assert get_res.status_code == 200
+    assert get_res.json()["farm"]["id"] == farm_id
+
+    # 5. Run rotations using saved farm_id
+    rot_res = client.post(
+        "/api/agronomy/rotations",
+        json={
+            "farm_id": farm_id,
+            "windows": [
+                {"start_month": 10, "start_day": 1, "end_month": 1, "end_day": 20},
+                {"start_month": 3, "start_day": 1, "end_month": 6, "end_day": 30},
+            ],
+            "max_sequences": 3,
+        },
+        headers=headers,
+    )
+    assert rot_res.status_code == 200
+    assert rot_res.json()["total"] == 3
+    assert rot_res.json()["rotations"][0]["rank"] == 1
+
+    # 6. Delete Farm
     del_res = client.delete(f"/api/farms/{farm_id}", headers=headers)
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "deleted"
 
-    # 6. Verify empty list
+    # 7. Verify empty list
     list_res2 = client.get("/api/farms", headers=headers)
     assert len(list_res2.json()["farms"]) == 0
