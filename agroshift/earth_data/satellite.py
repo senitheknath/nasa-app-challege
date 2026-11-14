@@ -72,16 +72,74 @@ def get_active_monitoring_layers(
     ]
 
 
-def _format_bbox(lat: float, lon: float, boundary: dict | None = None, delta_deg: float = 0.1) -> str:
-    """Derive bounding box string (W,S,E,N) from boundary GeoJSON or point radius."""
-    if boundary and isinstance(boundary, dict):
-        coords = boundary.get("coordinates")
-        if isinstance(coords, list) and coords and isinstance(coords[0], list):
-            ring = coords[0]
-            lons = [p[0] for p in ring if len(p) >= 2]
-            lats = [p[1] for p in ring if len(p) >= 2]
-            if lons and lats:
-                return f"{min(lons):.4f},{min(lats):.4f},{max(lons):.4f},{max(lats):.4f}"
+def normalize_boundary(boundary: Any) -> dict | None:
+    """Normalize GeoJSON Polygon, UI parcel {coordinates:[{lat,lng}]}, or [{lat,lng}] into GeoJSON Polygon."""
+    if not boundary:
+        return None
+    if isinstance(boundary, dict):
+        if boundary.get("type") == "Polygon" and isinstance(boundary.get("coordinates"), list):
+            return boundary
+        raw_coords = boundary.get("coordinates")
+        if isinstance(raw_coords, list):
+            boundary = raw_coords
+        else:
+            return None
+    if isinstance(boundary, list) and len(boundary) >= 3:
+        ring: list[list[float]] = []
+        for pt in boundary:
+            if isinstance(pt, dict) and "lat" in pt and ("lng" in pt or "lon" in pt):
+                lon = float(pt.get("lng", pt.get("lon")))
+                lat = float(pt["lat"])
+                ring.append([lon, lat])
+            elif isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                # Assume [lat, lon] from Leaflet/UI unless clearly GeoJSON
+                ring.append([float(pt[1]), float(pt[0])])
+        if len(ring) >= 3:
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
+            return {"type": "Polygon", "coordinates": [ring]}
+    return None
+
+
+def _bbox_from_area_ha(lat: float, lon: float, area_ha: float) -> str:
+    """Compute a square W,S,E,N bounding box centered at (lat, lon) covering area_ha hectares."""
+    import math
+    side_m = math.sqrt(max(float(area_ha), 0.01) * 10000.0)
+    half_m = side_m / 2.0
+    dlat = half_m / 111320.0
+    cos_lat = max(math.cos(math.radians(lat)), 0.01)
+    dlon = half_m / (111320.0 * cos_lat)
+    return f"{lon - dlon:.5f},{lat - dlat:.5f},{lon + dlon:.5f},{lat + dlat:.5f}"
+
+
+def _format_bbox(
+    lat: float,
+    lon: float,
+    boundary: Any = None,
+    bbox: Any = None,
+    area_ha: float | None = None,
+    delta_deg: float = 0.1,
+) -> str:
+    """Derive bounding box string (W,S,E,N) from bbox, boundary, area_ha, or point radius."""
+    if bbox:
+        if isinstance(bbox, str) and len(bbox.split(",")) == 4:
+            return bbox.strip()
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            return f"{float(bbox[0]):.5f},{float(bbox[1]):.5f},{float(bbox[2]):.5f},{float(bbox[3]):.5f}"
+        if isinstance(bbox, dict) and all(k in bbox for k in ("west", "south", "east", "north")):
+            return f"{float(bbox['west']):.5f},{float(bbox['south']):.5f},{float(bbox['east']):.5f},{float(bbox['north']):.5f}"
+
+    poly = normalize_boundary(boundary)
+    if poly:
+        ring = poly["coordinates"][0]
+        lons = [p[0] for p in ring if len(p) >= 2]
+        lats = [p[1] for p in ring if len(p) >= 2]
+        if lons and lats:
+            return f"{min(lons):.5f},{min(lats):.5f},{max(lons):.5f},{max(lats):.5f}"
+
+    if area_ha is not None and float(area_ha) > 0:
+        return _bbox_from_area_ha(lat, lon, float(area_ha))
+
     return f"{lon - delta_deg:.4f},{lat - delta_deg:.4f},{lon + delta_deg:.4f},{lat + delta_deg:.4f}"
 
 
@@ -89,15 +147,18 @@ def fetch_satellite_overpasses(
     latitude: float,
     longitude: float,
     *,
-    boundary: dict | None = None,
+    boundary: Any = None,
+    bbox: Any = None,
+    area_ha: float | None = None,
     offline: bool = False,
     limit_per_sensor: int = 2,
 ) -> dict[str, Any]:
     """Query NASA CMR for recent and upcoming Earth observation scenes over the field."""
-    # Check cache first
-    cached = get_cached("satellite_overpass", latitude, longitude)
-    if cached and not offline:
-        return cached["data"]
+    # Check cache first only for default point queries
+    if boundary is None and bbox is None and area_ha is None:
+        cached = get_cached("satellite_overpass", latitude, longitude)
+        if cached and not offline:
+            return cached["data"]
 
     sensors = [
         ("HLSL30", "Harmonized Landsat Sentinel-2 (30 m)", "surface_reflectance_ndvi", "2–3 days"),
@@ -105,9 +166,8 @@ def fetch_satellite_overpasses(
         ("SPL3SMP_E", "SMAP Enhanced Soil Moisture (9 km)", "root_zone_wetness", "1–2 days"),
     ]
 
-    bbox_str = _format_bbox(latitude, longitude, boundary=boundary)
+    bbox_str = _format_bbox(latitude, longitude, boundary=boundary, bbox=bbox, area_ha=area_ha)
     acquisitions: list[dict[str, Any]] = []
-
     if not offline:
         for short_name, sensor_label, sensor_role, recurrence in sensors:
             params = {

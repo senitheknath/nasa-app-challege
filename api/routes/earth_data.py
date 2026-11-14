@@ -29,18 +29,25 @@ async def autofill(request: Request) -> Response:
         longitude = float(payload["longitude"])
         offline = bool(payload.get("offline", False))
         refresh = bool(payload.get("refresh", False))
-        boundary = payload.get("boundary")
+        boundary = payload.get("boundary") or payload.get("parcel")
+        raw_area = payload.get("area_ha", payload.get("areaHectares"))
+        area_ha = float(raw_area) if raw_area is not None else None
 
         def _run():
             ds = get_dataset(latitude, longitude, refresh=refresh)
             result = derive_field_autofill(
-                latitude, longitude, country, boundary=boundary, dataset=ds, offline=offline
+                latitude,
+                longitude,
+                country,
+                boundary=boundary,
+                area_ha=area_ha,
+                dataset=ds,
+                offline=offline,
             )
             return {
                 "location": {"country": country, "latitude": latitude, "longitude": longitude},
                 "autofill": result["autofill"],
             }
-
         return json_response(await run_in_threadpool(_run))
     except (DataError, ValueError, KeyError, TypeError) as exc:
         return json_response({"error": str(exc)}, status_code=400)
@@ -53,19 +60,26 @@ async def satellite(request: Request) -> Response:
         latitude = float(payload["latitude"])
         longitude = float(payload["longitude"])
         offline = bool(payload.get("offline", False))
-        boundary = payload.get("boundary")
+        boundary = payload.get("boundary") or payload.get("parcel")
+        bbox = payload.get("bbox")
+        raw_area = payload.get("area_ha", payload.get("areaHectares"))
+        area_ha = float(raw_area) if raw_area is not None else None
 
         def _run():
             layers = get_active_monitoring_layers(latitude, longitude)
             overpasses = fetch_satellite_overpasses(
-                latitude, longitude, boundary=boundary, offline=offline
+                latitude,
+                longitude,
+                boundary=boundary,
+                bbox=bbox,
+                area_ha=area_ha,
+                offline=offline,
             )
             return {
                 "location": {"latitude": latitude, "longitude": longitude},
                 "layers": layers,
                 "overpass_schedule": overpasses,
             }
-
         return json_response(await run_in_threadpool(_run))
     except (DataError, ValueError, KeyError, TypeError) as exc:
         return json_response({"error": str(exc)}, status_code=400)
