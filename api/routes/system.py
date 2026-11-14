@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+from agroshift.config import load_platform_config
 from agroshift.presets import AREA_PRESETS, DEMO_SCENARIOS, LOCATION_PRESETS, SEASON_TEMPLATES
 from agroshift.decision import CRITERIA
 from agroshift.earth_data import DEFAULT_DB_PATH, get_connection, set_cached
@@ -201,10 +202,15 @@ async def cache_update(request: Request) -> Response:
     except Exception as exc:
         return json_response({"error": str(exc)}, status_code=500)
 
+async def system_config(_request: Request) -> Response:
+    """Return active global platform configuration (spatial precision policies, cache, layers)."""
+    return json_response({"config": load_platform_config()})
+
 
 routes = [
     Route("/api/health", health, methods=["GET"]),
     Route("/api/system/presets", presets, methods=["GET"]),
+    Route("/api/system/config", system_config, methods=["GET"]),
     Route("/api/cache/status", cache_status, methods=["GET"]),
     Route("/api/cache/clear", cache_clear, methods=["POST"]),
     Route("/api/cache/update", cache_update, methods=["POST"]),

@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from agroshift.decision import CRITERIA, Farm, Window
+from agroshift.earth_data.geometry import normalize_boundary, polygon_centroid
 from agroshift.identity import get_user_from_token, list_user_farms
 from agroshift.locations import load_history
 
@@ -192,13 +193,28 @@ def resolve_farm_context(request: Request, payload: dict[str, Any]) -> dict[str,
             "boundary": payload.get("boundary") or payload.get("parcel") or saved.get("boundary"),
             "bbox": payload.get("bbox"),
         }
+    boundary = payload.get("boundary") or payload.get("parcel")
+    bbox = payload.get("bbox")
+    lat = payload.get("latitude")
+    lon = payload.get("longitude")
+    if lat is None or lon is None:
+        poly = normalize_boundary(boundary)
+        centroid = polygon_centroid(poly)
+        if centroid:
+            lat, lon = centroid
+        elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            lat = (float(bbox[1]) + float(bbox[3])) / 2.0
+            lon = (float(bbox[0]) + float(bbox[2])) / 2.0
+        elif isinstance(bbox, dict) and all(k in bbox for k in ("west", "south", "east", "north")):
+            lat = (float(bbox["south"]) + float(bbox["north"])) / 2.0
+            lon = (float(bbox["west"]) + float(bbox["east"])) / 2.0
     return {
         "farm_id": None,
         "name": None,
         "country": str(payload.get("country", "LK")).upper(),
-        "latitude": float(payload["latitude"]),
-        "longitude": float(payload["longitude"]),
+        "latitude": float(lat),
+        "longitude": float(lon),
         "area_ha": payload.get("area_ha", payload.get("areaHectares")),
-        "boundary": payload.get("boundary") or payload.get("parcel"),
-        "bbox": payload.get("bbox"),
+        "boundary": boundary,
+        "bbox": bbox,
     }

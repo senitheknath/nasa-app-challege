@@ -145,10 +145,20 @@ async def places(request: Request) -> Response:
     except (DataError, ValueError) as exc:
         return json_response({"error": str(exc)}, status_code=400)
 
+async def layers(request: Request) -> Response:
+    """Return global map overlay layers (NASA GIBS WMTS + ISRIC SoilGrids WMS)."""
+    category = (request.query_params.get("category") or "").strip().lower()
+    target_date = (request.query_params.get("date") or "").strip() or None
+    all_layers = get_active_monitoring_layers(0.0, 0.0, target_date=target_date)
+    if category:
+        all_layers = [l for l in all_layers if l.get("category") == category]
+    return json_response({"layers": all_layers, "count": len(all_layers)})
+
 
 routes = [
     Route("/api/earth-data/autofill", autofill, methods=["POST"]),
     Route("/api/earth-data/satellite", satellite, methods=["POST"]),
     Route("/api/earth-data/climate", climate, methods=["POST"]),
+    Route("/api/earth-data/layers", layers, methods=["GET"]),
     Route("/api/earth-data/places", places, methods=["GET"]),
 ]
