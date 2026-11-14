@@ -31,8 +31,9 @@ def test_real_archives_support_general_but_no_unconfirmed_rotation(country):
     assert len(options) >= 10
     assert all(o["support"] == "general" and o["sources"] for o in options)
     assert any(o["id"] == "wheat" for o in options)
-    # Sri Lankan-only profiles and crops without traits are withheld everywhere in general mode.
-    assert {"mung_bean", "cowpea", "yam"}.isdisjoint(o["id"] for o in options)
+    # Crops without global traits are withheld everywhere in general mode; rice & mung_bean are now global.
+    assert {"cowpea", "yam"}.isdisjoint(o["id"] for o in options)
+    assert {"rice", "mung_bean"}.issubset(o["id"] for o in options)
     assert all("yield" not in " ".join((c["summary"], c["reason"], c["water"])).lower() for c in options)
     assert all("probability" not in c and "expected_yield" not in c for c in options)
 

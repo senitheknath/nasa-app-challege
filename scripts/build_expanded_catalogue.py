@@ -277,6 +277,18 @@ ADDITIONAL_SCREENING_TRAITS = [
     ("sugar_beet", "persistent_waterlogging_conflict", 1, 1, "boolean", "fao_33_yield_response_1979", "Requires good internal drainage."),
     ("sugar_beet", "seasonal_crop_et", 550, 750, "mm/crop cycle", "fao_irrigation_manual_3_1986", "FAO Training Manual 3 Table 3 sugar beet seasonal water need."),
     ("sugar_beet", "indicative_cycle_duration", 140, 200, "days", "fao_56_crop_water_1998", "FAO-56 Table 11 sugar beet cycle duration."),
+    # Rice
+    ("rice", "preferred_daily_mean_air_temperature", 20, 32, "degC", "fao_33_yield_response_1979", "FAO Paper 33 tropical/subtropical temperature range for paddy rice."),
+    ("rice", "preferred_soil_ph", 5.0, 7.5, "pH", "fao_56_crop_water_1998", "Tolerates moderately acidic flooded soils up to neutral pH."),
+    ("rice", "persistent_waterlogging_conflict", 0, 0, "boolean", "fao_56_crop_water_1998", "Adapted to flooded/saturated paddy conditions."),
+    ("rice", "seasonal_crop_et", 450, 700, "mm/crop cycle", "fao_irrigation_manual_3_1986", "FAO Training Manual 3 Table 3 paddy rice seasonal water requirement."),
+    ("rice", "indicative_cycle_duration", 90, 150, "days", "fao_56_crop_water_1998", "FAO-56 Table 11 rice cycle duration."),
+    # Mung bean
+    ("mung_bean", "preferred_daily_mean_air_temperature", 22, 34, "degC", "fao_66_crop_yield_water_2012", "Warm-season short-duration tropical pulse."),
+    ("mung_bean", "preferred_soil_ph", 5.5, 7.5, "pH", "fao_66_crop_yield_water_2012", "Prefers well-drained slightly acidic to neutral loams."),
+    ("mung_bean", "persistent_waterlogging_conflict", 1, 1, "boolean", "fao_66_crop_yield_water_2012", "Sensitive to prolonged root-zone waterlogging."),
+    ("mung_bean", "seasonal_crop_et", 300, 450, "mm/crop cycle", "fao_56_crop_water_1998", "FAO-56 / Paper 66 short-season pulse water use."),
+    ("mung_bean", "indicative_cycle_duration", 55, 80, "days", "fao_56_crop_water_1998", "Short-duration summer/dry-season legume cycle."),
 ]
 
 # FAO-56 Table 12 & 22 & 17 parameters (stored in ag_evidence as reviewed traits with specific units)
@@ -460,8 +472,8 @@ def main():
     import subprocess
     raw = subprocess.check_output(["git", "show", "HEAD:data/global_catalogue.json"], cwd=ROOT)
     doc = json.loads(raw.decode("utf-8"))
-    doc["version"] = "2026-11-09.global.3"
-    doc["retrieved_on"] = "2026-11-09"
+    doc["version"] = "2026-11-13.global.4"
+    doc["retrieved_on"] = "2026-11-13"
 
     existing_source_ids = {s["id"] for s in doc["sources"]}
     for src in NEW_SOURCES:
