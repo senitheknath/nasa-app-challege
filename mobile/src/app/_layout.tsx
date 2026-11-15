@@ -9,6 +9,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createQueryClient, connectQueryLifecycle } from '@/api/query';
 import { onSessionExpired } from '@/api/session';
 import { Message } from '@/components/primitives';
+import { CrescoBubble } from '@/features/cresco/components/CrescoBubble';
+import { clearCrescoSessionToken } from '@/features/cresco/session';
 import { strings } from '@/i18n/strings';
 import { usePlanner } from '@/state/usePlanner';
 import { colors, space } from '@/theme/tokens';
@@ -27,6 +29,7 @@ export default function RootLayout() {
   const [loaded, fontError] = useFonts(fonts);
   useEffect(connectQueryLifecycle, []);
   useEffect(() => onSessionExpired(() => {
+    clearCrescoSessionToken();
     void client.cancelQueries();
     client.clear();
     usePlanner.getState().reset();
@@ -39,7 +42,12 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={client}>
           <StatusBar style="light" />
-          <Stack screenOptions={{ headerShown: false, animation: 'none', contentStyle: styles.root }} />
+          <View style={styles.root}>
+            <Stack screenOptions={{ headerShown: false, animation: 'none', contentStyle: styles.root }}>
+              <Stack.Screen name="cresco" />
+            </Stack>
+            <CrescoBubble />
+          </View>
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

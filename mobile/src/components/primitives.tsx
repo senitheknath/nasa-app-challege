@@ -5,6 +5,7 @@ import {
   type TextInputProps, type TextProps, type TextStyle, type ViewStyle, type StyleProp,
 } from 'react-native';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import { useAvoidanceZone } from '@/features/cresco/avoidance';
 import { strings } from '@/i18n/strings';
 import { colors, glass, icons, motion, radius, size, space } from '@/theme/tokens';
 import { typography } from '@/theme/typography';
@@ -14,8 +15,20 @@ import { Icon, type IconName } from './Icon';
 type Tone = keyof typeof colors;
 type TextTone = { [K in Tone]: (typeof colors)[K] extends string ? K : never }[Tone];
 type Variant = keyof typeof typography;
-export function Label({ variant = 'body', tone = 'cream', style, ...props }: TextProps & { variant?: Variant; tone?: TextTone }) {
-  return <Text {...props} style={[typography[variant], { color: colors[tone] }, style]} />;
+export function Label({ variant = 'body', tone = 'cream', avoidBubble, style, onLayout, ...props }: TextProps & { variant?: Variant; tone?: TextTone; avoidBubble?: boolean }) {
+  const shouldAvoid = Boolean(avoidBubble || variant === 'title' || variant === 'heading');
+  const [avoidRef, onAvoidLayout] = useAvoidanceZone(undefined, shouldAvoid, 'text', 8);
+  return (
+    <Text
+      {...props}
+      ref={shouldAvoid ? (avoidRef as never) : undefined}
+      onLayout={(e) => {
+        if (shouldAvoid) onAvoidLayout();
+        onLayout?.(e);
+      }}
+      style={[typography[variant], { color: colors[tone] }, style]}
+    />
+  );
 }
 
 type SurfaceKind = 'glass' | 'strong' | 'card' | 'selected' | 'highlight' | 'danger';
@@ -53,8 +66,9 @@ export function IconButton({ name, label, onPress, tone = 'glass', disabled, col
   name: IconName; label: string; onPress: () => void; tone?: 'glass' | 'accent' | 'dark'; disabled?: boolean; color?: string;
 }) {
   const { reducedMotion } = useTheme();
+  const [avoidRef, onAvoidLayout] = useAvoidanceZone(undefined, true, 'button', 10);
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }}
+    <Pressable ref={avoidRef} onLayout={onAvoidLayout} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }}
       disabled={disabled} onPress={onPress}
       style={({ pressed }) => [styles.iconButton, {
         backgroundColor: { glass: colors.iconGlass, dark: colors.iconDark, accent: colors.accent }[tone],
@@ -67,9 +81,10 @@ export function IconButton({ name, label, onPress, tone = 'glass', disabled, col
 
 export function PrimaryButton({ label, onPress, disabled, busy }: { label: string; onPress: () => void; disabled?: boolean; busy?: boolean }) {
   const { reducedMotion } = useTheme();
+  const [avoidRef, onAvoidLayout] = useAvoidanceZone(undefined, true, 'button', 10);
   const inactive = disabled || busy;
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled: inactive, busy }}
+    <Pressable ref={avoidRef} onLayout={onAvoidLayout} accessibilityRole="button" accessibilityState={{ disabled: inactive, busy }}
       disabled={inactive} onPress={onPress}
       style={({ pressed }) => [styles.primary, inactive ? styles.disabled : glass.actionShadow, pressed && !reducedMotion && styles.pressed]}>
       <Label tone="forest950" variant="button" style={styles.grow}>{label}</Label>

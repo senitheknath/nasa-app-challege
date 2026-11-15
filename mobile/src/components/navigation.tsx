@@ -1,5 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { useAvoidanceZone } from '@/features/cresco/avoidance';
 import { strings } from '@/i18n/strings';
 import { colors, icons, motion, radius, size, space } from '@/theme/tokens';
 import { useTheme } from '@/theme/useTheme';
@@ -40,8 +41,9 @@ export function StepBar({ current, reached, skipped, onStep }: {
 export function ScreenHeader({ title, subtitle, top, onBack, onCountry, onAccount }: {
   title: string; subtitle: string; top: number; onBack: () => void; onCountry: () => void; onAccount?: () => void;
 }) {
+  const [headerRef, onHeaderLayout] = useAvoidanceZone('screen-header', true, 'chrome', 12);
   return (
-    <View style={[styles.header, { paddingTop: top }]} pointerEvents="box-none">
+    <View ref={headerRef} onLayout={onHeaderLayout} style={[styles.header, { paddingTop: top }]} pointerEvents="box-none">
       <LinearGradient pointerEvents="none" colors={[colors.topScrim, colors.middleScrim, colors.transparent]} style={StyleSheet.absoluteFill} />
       <IconButton name="back" label={strings.back} onPress={onBack} />
       <View style={styles.headerText} pointerEvents="none">
@@ -59,8 +61,9 @@ export function ScreenFooter({ label, current, reached, skipped, disabled, busy,
   onNext: () => void; onStep: (step: number) => void; onMonitor?: () => void; monitorActive?: boolean; monitorDisabled?: boolean; bottom: number;
 }) {
   const { reducedMotion } = useTheme();
+  const [footerRef, onFooterLayout] = useAvoidanceZone('screen-footer', true, 'chrome', 12);
   return (
-    <View style={[styles.footer, { paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
+    <View ref={footerRef} onLayout={onFooterLayout} style={[styles.footer, { paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
       <LinearGradient pointerEvents="none" colors={[colors.transparent, colors.middleScrim, colors.bottomScrim]} style={StyleSheet.absoluteFill} />
       {!monitorActive && <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />}
       <View style={styles.footerBar}>

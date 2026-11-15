@@ -1,3 +1,12 @@
+import {
+  crescoChatResponseSchema,
+  crescoClearResponseSchema,
+  crescoConnectResponseSchema,
+  crescoDisconnectResponseSchema,
+  crescoStatusResponseSchema,
+  type CrescoInlineFarm,
+} from '@/features/cresco/model';
+import { crescoRequestJson } from '@/features/cresco/api';
 import { measurementSchema, mapSchema, placesSchema, type FieldDto } from '@/features/area/model';
 import { countryDataSchema } from '@/features/country/model';
 import { categoriesSchema, cropPageSchema } from '@/features/crop/model';
@@ -79,6 +88,9 @@ type RawRotationsResponse = {
   status?: string;
   mode?: string;
   total?: number;
+  threshold_config?: {
+    expiry_buffer_days?: number;
+  } | null;
   rotations?: {
     id: string;
     name: string;
@@ -108,6 +120,12 @@ type RawRotationsResponse = {
     easiness_matrix?: {
       easiness_tier?: string | null;
       easiness_score?: number | null;
+      factors?: {
+        turnaround_expiry_pressure?: number | null;
+        water_irrigation_dependency?: number | null;
+        soil_nutrient_intervention?: number | null;
+        pest_pathogen_vigilance?: number | null;
+      } | null;
     } | null;
     timeline?: {
       overall_status?: string;
@@ -138,6 +156,12 @@ type RawRotationsResponse = {
         days_until_safe_expiry?: number | null;
         days_until_hard_expiry?: number | null;
         collision_probability_pct?: number | null;
+        uncertainty_cone?: {
+          early_end_date?: string | null;
+          nominal_end_date?: string | null;
+          late_end_date?: string | null;
+          span_days?: number | null;
+        } | null;
       }[];
     };
   }[];
@@ -500,13 +524,13 @@ export const endpoints = {
         category: { id: cat, label: cat },
         yieldTonnesPerHectare: Number(item.yield_tonnes_per_ha ?? item.yieldTonnesPerHectare ?? 0),
         waterPercent: Number(item.water_percent ?? item.waterPercent ?? 50),
-        scientificName: item.scientific_name,
-        family: item.family,
+        scientificName: item.scientific_name ?? undefined,
+        family: item.family ?? undefined,
         lifeCycle: item.life_cycle ?? undefined,
         growthDays,
-        suitability: item.suitability,
-        reason: item.reason,
-        supportLevel: item.support_level,
+        suitability: item.suitability ?? undefined,
+        reason: item.reason ?? undefined,
+        supportLevel: item.support_level ?? undefined,
       };
     });
 
@@ -540,6 +564,7 @@ export const endpoints = {
         irrigation,
         current: body.cropId ?? undefined,
         custom_crop_ids: body.customCropIds && body.customCropIds.length > 0 ? body.customCropIds : undefined,
+        expiry_buffer_days: body.expirySafetyDays !== undefined ? Math.round(body.expirySafetyDays) : undefined,
         max_sequences: 12,
       },
       signal,
@@ -580,7 +605,11 @@ export const endpoints = {
       delaySlackDays: slot.delay_slack_days ?? undefined,
       safeExpiryDate: slot.safe_expiry_date ?? undefined,
       hardExpiryDate: slot.hard_expiry_date ?? undefined,
+      daysUntilSafeExpiry: slot.days_until_safe_expiry ?? undefined,
+      daysUntilHardExpiry: slot.days_until_hard_expiry ?? undefined,
       collisionProbabilityPct: slot.collision_probability_pct ?? undefined,
+      uncertaintyCone: slot.uncertainty_cone ?? undefined,
+      growthCycleDays: slot.growth_cycle_days ?? undefined,
       kcMax: slot.kc_max ?? undefined,
     }));
 
@@ -591,6 +620,9 @@ export const endpoints = {
       timeline,
       mode: res.mode ?? 'continuous',
       total: res.total ?? rotations.length,
+      ...(res.threshold_config
+        ? { thresholdConfig: { expiryBufferDays: res.threshold_config.expiry_buffer_days } }
+        : {}),
       rotations,
     });
   },
@@ -717,4 +749,84 @@ export const endpoints = {
       status: string;
       id: number;
     }>,
+
+  crescoConnect: (
+    body: { api_key: string; farm_id?: string | number | null },
+    signal?: AbortSignal,
+  ) =>
+    crescoRequestJson(
+      {
+        method: 'POST',
+        path: '/api/cresco/connect',
+        body: {
+          api_key: body.api_key,
+          ...(body.farm_id !== undefined && body.farm_id !== null ? { farm_id: body.farm_id } : {}),
+        },
+        signal,
+      },
+      crescoConnectResponseSchema,
+    ),
+
+  crescoStatus: (farmId?: string | number | null, signal?: AbortSignal) =>
+    crescoRequestJson(
+      {
+        method: 'GET',
+        path: '/api/cresco/status',
+        query: farmId !== undefined && farmId !== null ? { farm_id: String(farmId) } : undefined,
+        signal,
+      },
+      crescoStatusResponseSchema,
+    ),
+
+  crescoChat: (
+    body: {
+      message: string;
+      farm_id?: string | number | null;
+      farm?: CrescoInlineFarm;
+      season?: string;
+      area_id?: string;
+      language?: 'en' | 'si' | 'ta' | 'auto';
+      clear_history?: boolean;
+    },
+    signal?: AbortSignal,
+  ) =>
+    crescoRequestJson(
+      {
+        method: 'POST',
+        path: '/api/cresco/chat',
+        body: {
+          message: body.message,
+          ...(body.farm_id !== undefined && body.farm_id !== null ? { farm_id: body.farm_id } : {}),
+          ...(body.farm ? { farm: body.farm } : {}),
+          ...(body.season ? { season: body.season } : {}),
+          ...(body.area_id ? { area_id: body.area_id } : {}),
+          ...(body.language ? { language: body.language } : {}),
+          ...(body.clear_history !== undefined ? { clear_history: body.clear_history } : {}),
+        },
+        signal,
+      },
+      crescoChatResponseSchema,
+    ),
+
+  crescoClear: (farmId?: string | number | null, signal?: AbortSignal) =>
+    crescoRequestJson(
+      {
+        method: 'POST',
+        path: '/api/cresco/clear',
+        body: farmId !== undefined && farmId !== null ? { farm_id: farmId } : {},
+        signal,
+      },
+      crescoClearResponseSchema,
+    ),
+
+  crescoDisconnect: (signal?: AbortSignal) =>
+    crescoRequestJson(
+      {
+        method: 'POST',
+        path: '/api/cresco/disconnect',
+        body: {},
+        signal,
+      },
+      crescoDisconnectResponseSchema,
+    ),
 };

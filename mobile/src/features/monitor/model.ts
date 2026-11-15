@@ -32,6 +32,8 @@ export const terrainVertexSchema = z.object({
   twi: z.number().optional(),
   s1_s2_wetness_idx: z.number().optional(),
   downscaled_moisture_pct: z.number().optional(),
+  chlorophyll_ug_cm2: z.number().optional(),
+  chlorophyll_index: z.number().optional(),
 });
 
 export const boundaryUvPointSchema = z.object({
@@ -163,6 +165,10 @@ export const slab3dSchema = z.object({
     is_bare_soil: z.boolean().optional(),
     ecostress_thermal_stress_delta_c: z.number().optional(),
     overpasses: z.unknown().optional(),
+    chlorophyll_mean_ug_cm2: z.number().optional(),
+    chlorophyll_min_ug_cm2: z.number().optional(),
+    chlorophyll_max_ug_cm2: z.number().optional(),
+    chlorophyll_source: z.string().optional(),
   }).passthrough(),
   terrain_3d_mesh: terrainMeshSchema,
   soil_3d_horizons: z.array(soilHorizonSchema),

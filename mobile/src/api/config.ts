@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 export const useMocks = false;
 
-export const defaultBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+export const defaultBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:8000').replace(/\/+$/, '');
 export let baseUrl = defaultBaseUrl;
 
 const SERVER_KEY = 'cresco.server-url';
