@@ -79,6 +79,28 @@ def _build_atmosphere_layer(latitude: float, dataset: Any) -> dict[str, Any]:
     }
 
 
+def estimate_climate_prior_ndvi(
+    latitude: float,
+    dataset: Any,
+    base_ndvi: float = 0.58,
+    irrigation: str = "rainfed",
+) -> float:
+    """Cap unobserved prior NDVI in hyper-arid/desert climates so bare sand does not appear green."""
+    if str(irrigation or "").strip().lower() == "irrigated":
+        return float(base_ndvi)
+    atmo = _build_atmosphere_layer(latitude, dataset)
+    et0 = max(0.5, float(atmo.get("et0_mm_day") or 4.0))
+    mean_rain = float(atmo.get("rainfall_mm_day") or 0.0)
+    if dataset is not None and hasattr(dataset, "frame") and not dataset.frame.empty and "PRECTOTCORR" in dataset.frame:
+        mean_rain = float(dataset.frame["PRECTOTCORR"].mean())
+    aridity = mean_rain / et0
+    if mean_rain < 0.25 or aridity < 0.08:
+        return min(float(base_ndvi), 0.12)
+    if mean_rain < 0.65 or aridity < 0.18:
+        return min(float(base_ndvi), 0.28)
+    return float(base_ndvi)
+
+
 def _build_5x5_grid_coords(bbox_str: str) -> list[tuple[int, int, float, float]]:
     """Generate 25 (row, col, lat, lon) coordinates over a W,S,E,N bounding box."""
     west, south, east, north = [float(x) for x in bbox_str.split(",")]
@@ -480,6 +502,7 @@ def _assemble_slab_payload(
     terrain_3d_mesh: dict[str, Any],
     soil_3d_horizons: list[dict[str, Any]],
     fusion_stage: str,
+    ndvi_is_observed: bool = False,
 ) -> dict[str, Any]:
     """Assemble a complete 3D slab dictionary for a given progressive fusion stage."""
     is_bare_soil = float(ndvi_current) < 0.20
@@ -568,8 +591,12 @@ def _assemble_slab_payload(
     canopy_layer["chlorophyll_max_ug_cm2"] = round(max(chl_vals) if chl_vals else base_cab, 2)
     canopy_layer["chlorophyll_source"] = (
         "Sentinel-2 / Landsat / MODIS + 30m TWI"
-        if (has_optical_acq and not offline)
-        else "Satellite Canopy Prior + 30m TWI"
+        if (has_optical_acq and not offline and ndvi_is_observed)
+        else (
+            "NASA POWER Climate & Canopy Prior + 30m TWI"
+            if "NASA POWER" in str(atmosphere_layer.get("source") or "")
+            else "Satellite Canopy Prior + 30m TWI"
+        )
     )
 
     combined_parcel_dt_days = update_frequencies.get("combined_parcel_dt_days")
@@ -626,6 +653,8 @@ def build_3d_field_slab(
     offline: bool = False,
     stage: str = "full",
     precomputed_autofill: dict[str, Any] | None = None,
+    ndvi_is_observed: bool = False,
+    irrigation: str = "rainfed",
 ) -> dict[str, Any]:
     """Assemble a complete 3D Field Slab (atmosphere, canopy, 5x5 terrain mesh, 4 soil horizons, update frequencies)."""
     from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
@@ -638,6 +667,11 @@ def build_3d_field_slab(
     norm_boundary = normalize_boundary(boundary)
     geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
     atmosphere_layer = _build_atmosphere_layer(lat, dataset)
+    resolved_ndvi = (
+        float(ndvi_current)
+        if ndvi_is_observed
+        else estimate_climate_prior_ndvi(lat, dataset, base_ndvi=float(ndvi_current), irrigation=irrigation)
+    )
 
     if stage == "fast":
         overpasses, had_cached_overpasses = _get_cached_overpasses_or_offline(
@@ -678,13 +712,14 @@ def build_3d_field_slab(
             area_ha=area_ha,
             bounding_box=geom["bbox"],
             active_root_depth_m=active_root_depth_m,
-            ndvi_current=ndvi_current,
+            ndvi_current=resolved_ndvi,
             offline=offline,
             atmosphere_layer=atmosphere_layer,
             overpasses=overpasses,
             terrain_3d_mesh=terrain_3d_mesh,
             soil_3d_horizons=soil_3d_horizons,
             fusion_stage=fusion_stage,
+            ndvi_is_observed=ndvi_is_observed,
         )
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -730,13 +765,14 @@ def build_3d_field_slab(
         area_ha=area_ha,
         bounding_box=geom["bbox"],
         active_root_depth_m=active_root_depth_m,
-        ndvi_current=ndvi_current,
+        ndvi_current=resolved_ndvi,
         offline=offline,
         atmosphere_layer=atmosphere_layer,
         overpasses=overpasses,
         terrain_3d_mesh=terrain_3d_mesh,
         soil_3d_horizons=soil_3d_horizons,
         fusion_stage="stage_2_full_fusion",
+        ndvi_is_observed=ndvi_is_observed,
     )
 
 
@@ -752,6 +788,8 @@ def iter_progressive_3d_field_slab(
     ndvi_current: float = 0.58,
     offline: bool = False,
     precomputed_autofill: dict[str, Any] | None = None,
+    ndvi_is_observed: bool = False,
+    irrigation: str = "rainfed",
 ) -> Iterator[dict[str, Any]]:
     """Yield progressive 3D Field Slab states (Stage 0 prior -> Stage 1 SAR/DEM -> Stage 2 full 3-way fusion)."""
     from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
@@ -761,6 +799,11 @@ def iter_progressive_3d_field_slab(
     norm_boundary = normalize_boundary(boundary)
     geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
     atmosphere_layer = _build_atmosphere_layer(lat, dataset)
+    resolved_ndvi = (
+        float(ndvi_current)
+        if ndvi_is_observed
+        else estimate_climate_prior_ndvi(lat, dataset, base_ndvi=float(ndvi_current), irrigation=irrigation)
+    )
 
     # Stage 0: Immediate climate/soil priors + synthesized 5x5 relief + 1-sensor prior (sigma = 6.0%)
     stage0_overpasses, _ = _get_cached_overpasses_or_offline(
@@ -796,13 +839,14 @@ def iter_progressive_3d_field_slab(
         area_ha=area_ha,
         bounding_box=geom["bbox"],
         active_root_depth_m=active_root_depth_m,
-        ndvi_current=ndvi_current,
+        ndvi_current=resolved_ndvi,
         offline=offline,
         atmosphere_layer=atmosphere_layer,
         overpasses=stage0_overpasses,
         terrain_3d_mesh=stage0_terrain,
         soil_3d_horizons=stage0_soil,
         fusion_stage="stage_0_prior",
+        ndvi_is_observed=ndvi_is_observed,
     )
 
     pool = ThreadPoolExecutor(max_workers=3)
@@ -850,13 +894,14 @@ def iter_progressive_3d_field_slab(
             area_ha=area_ha,
             bounding_box=geom["bbox"],
             active_root_depth_m=active_root_depth_m,
-            ndvi_current=ndvi_current,
+            ndvi_current=resolved_ndvi,
             offline=offline,
             atmosphere_layer=atmosphere_layer,
             overpasses=stage0_overpasses,
             terrain_3d_mesh=stage1_terrain,
             soil_3d_horizons=stage1_soil,
             fusion_stage="stage_1_sar_terrain",
+            ndvi_is_observed=ndvi_is_observed,
         )
 
         # Stage 2: Full 3-way sensor fusion (sigma = 2.92%), 4-horizon SoilGrids WCS, and STAC/CMR overpasses
@@ -877,13 +922,14 @@ def iter_progressive_3d_field_slab(
             area_ha=area_ha,
             bounding_box=geom["bbox"],
             active_root_depth_m=active_root_depth_m,
-            ndvi_current=ndvi_current,
+            ndvi_current=resolved_ndvi,
             offline=offline,
             atmosphere_layer=atmosphere_layer,
             overpasses=full_overpasses,
             terrain_3d_mesh=stage1_terrain,
             soil_3d_horizons=full_soil,
             fusion_stage="stage_2_full_fusion",
+            ndvi_is_observed=ndvi_is_observed,
         )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
