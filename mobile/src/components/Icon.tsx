@@ -16,6 +16,11 @@ const paths = {
   redo: 'M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4',
   map: 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2ZM9 4v14M15 6v14',
   globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18',
+  user: 'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z',
+  bookmark: 'M6 4h12a1 1 0 0 1 1 1v16l-7-4-7 4V5a1 1 0 0 1 1-1Z',
+  cube: 'M12 2 3 7v10l9 5 9-5V7l-9-5ZM3 7l9 5 9-5M12 12v10',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
+  plus: 'M12 5v14M5 12h14',
 } as const;
 
 export type IconName = keyof typeof paths;

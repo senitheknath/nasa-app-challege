@@ -9,19 +9,34 @@ import { ScreenFooter, ScreenHeader } from '@/components/navigation';
 import { PlanSheet } from '@/components/PlanSheet';
 import { Chip, ErrorCard, IconButton, Label, PrimaryButton, Progress, SearchField, Segmented, Stat } from '@/components/primitives';
 import { Suggestions } from '@/components/Suggestions';
-import { mapCrop } from '@/features/crop/model';
+import { mapCrop, type CropDto } from '@/features/crop/model';
 import { strings } from '@/i18n/strings';
-import { countries, crops, strategies } from '@/mocks/catalog';
 import { pictures } from '@/theme/images';
 import { colors, size, space } from '@/theme/tokens';
 import { calendarDate } from '@/utils/format';
+
+const countries = [
+  { id: 'AF', name: 'Afghanistan', supported: false },
+  { id: 'LK', name: 'Sri Lanka', supported: true },
+] as const;
+const sampleCropDto: CropDto = {
+  id: 'rice',
+  name: 'Rice (Bg 352)',
+  category: { id: 'cereal', label: 'Cereal' },
+  yieldTonnesPerHectare: 4.8,
+  waterPercent: 72,
+};
+const strategies = [
+  { id: 'continuous_rainfed', tag: 'Continuous', title: 'Continuous Rainfed', description: 'Dynamic two-crop rotation using rainfall.' },
+  { id: 'standing', tag: 'Standing', title: 'Standing Crop', description: 'Plan around an active crop in the field.' },
+] as const;
 
 const noop = () => undefined;
 const tabs = [{ id: 'overview', label: strings.overview }, { id: 'timeline', label: strings.timeline }];
 const states: LoadState[] = ['empty', 'error', 'offline'];
 const layouts: SkeletonLayout[] = ['country', 'map', 'strategy', 'crop', 'plan'];
 const points = [{ x: 15, y: 35 }, { x: 74, y: 30 }, { x: 70, y: 74 }];
-const selectedCrop = mapCrop(crops[0]);
+const selectedCrop = mapCrop(sampleCropDto);
 const workflow = [
   { label: strings.workflow[0], icon: 'layers' }, { label: strings.workflow[1], icon: 'sprout' }, { label: strings.workflow[2], icon: 'redo' },
 ] as const;
@@ -47,13 +62,13 @@ export default function Gallery() {
         <PrimaryButton label={strings.next} onPress={noop} disabled />
         <PrimaryButton label={strings.generate} onPress={noop} busy />
         <Label variant="title">{strings.galleryLabels[1]}</Label>
-        <ScreenHeader title={strings.strategyTitle} subtitle={strings.stepSubtitle(countries[10].name, 3, 5)} top={0} onBack={noop} onCountry={noop} />
+        <ScreenHeader title={strings.strategyTitle} subtitle={strings.stepSubtitle(countries[1].name, 3, 5)} top={0} onBack={noop} onCountry={noop} />
         <ScreenFooter label={strings.next} current={3} reached={4} onNext={noop} onStep={noop} bottom={0} />
         <Label variant="title">{strings.galleryLabels[2]}</Label>
         <SearchField glassy accessibilityLabel={strings.country} placeholder={strings.countryPlaceholder} value={search} onChangeText={setSearch} />
-        <SearchField glassy compact focused value={countries[10].name} editable={false} />
+        <SearchField glassy compact focused value={countries[1].name} editable={false} />
         <SearchField glassy invalid editable={false} value={countries[0].name} />
-        <Suggestions items={[0, 10].map((index) => ({ id: countries[index].id, label: countries[index].name,
+        <Suggestions items={[0, 1].map((index) => ({ id: countries[index].id, label: countries[index].name,
           accent: countries[index].supported, detail: countries[index].supported ? strings.ready : strings.unavailable }))} onSelect={noop} />
         <Suggestions items={[]} message={strings.noMatch} onSelect={noop} />
         <DateField value={date} onChange={setDate} />
@@ -92,7 +107,7 @@ export default function Gallery() {
           </PlanSheet>
         </View>
         <Label variant="title">{strings.galleryLabels[5]}</Label>
-        <ErrorCard title={strings.unsupportedCountry(countries[0].name)} hint={strings.supportedCountry(countries[10].name)} />
+        <ErrorCard title={strings.unsupportedCountry(countries[0].name)} hint={strings.supportedCountry(countries[1].name)} />
         {states.map((state) => <Feedback key={state} state={state} layout="plan" onRetry={noop} />)}
         {layouts.map((layout) => <Feedback key={layout} state="loading" layout={layout} />)}
       </ScrollView>

@@ -1,10 +1,11 @@
+import { router } from 'expo-router';
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { RefreshControl, StyleSheet, View, type ScrollView } from 'react-native';
 import { useOffline, viewState } from '@/api/query';
 import { Logo, SeasonBadge, Workflow } from '@/components/cards';
 import { Backdrop } from '@/components/FieldMap';
 import { Feedback } from '@/components/feedback';
-import { ErrorCard, Label, SearchField, Stat } from '@/components/primitives';
+import { Chip, ErrorCard, IconButton, Label, SearchField, Stat } from '@/components/primitives';
 import { Suggestions } from '@/components/Suggestions';
 import { useSearchFocus } from '@/hooks/useSearchFocus';
 import { strings } from '@/i18n/strings';
@@ -31,6 +32,7 @@ export default function CountryScreen() {
   const defaultCountry = data?.defaultCountry;
   const multipleSupported = data?.countries.some((item) => item.supported && item.id !== defaultCountry?.id);
   const chooseCountry = usePlanner((draft) => draft.chooseCountry);
+  const farmName = usePlanner((draft) => draft.farmName);
   const [search, setSearch] = useState('');
   const [unavailable, setUnavailable] = useState('');
   const { dismiss, focused, open, panelProps } = useSearchFocus();
@@ -55,7 +57,12 @@ export default function CountryScreen() {
     }
     setUnavailable('');
     setSearch('');
-    chooseCountry(country.id);
+    chooseCountry(
+      country.id,
+      country.latitude !== undefined && country.longitude !== undefined
+        ? { latitude: country.latitude, longitude: country.longitude, zoom: country.zoom }
+        : undefined,
+    );
     go(2);
   };
   const term = search.trim().toLocaleLowerCase();
@@ -76,7 +83,11 @@ export default function CountryScreen() {
           refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} tintColor={colors.accent} colors={[colors.accent]} />}>
           <View style={styles.top}>
             <Logo />
-            {!!data?.season && <SeasonBadge label={strings.season(data.season)} />}
+            <View style={styles.topActions}>
+              {!!farmName && <Chip label={strings.activeFarm(farmName)} onPress={() => router.push('/login')} />}
+              {!!data?.season && <SeasonBadge label={strings.season(data.season)} />}
+              <IconButton name="user" label={strings.account} onPress={() => router.push('/login')} />
+            </View>
           </View>
           <View style={styles.hero}>
             <Label variant="hero" accessibilityRole="header">{strings.heroPrimary}{'\n'}<Label variant="hero" tone="accent">{strings.heroAccent}</Label></Label>
@@ -116,6 +127,7 @@ export default function CountryScreen() {
 const styles = StyleSheet.create({
   content: { flexGrow: 1 },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexShrink: 1 },
   hero: { marginTop: space.gutter, marginBottom: space.md },
   subtitle: { marginTop: space.md },
   searchSection: { gap: space.sm },

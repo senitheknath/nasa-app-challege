@@ -8,7 +8,7 @@ import { IconButton, Label, PrimaryButton, Surface } from './primitives';
 
 const steps = [
   [strings.country, 'globe'], [strings.area, 'map'], [strings.strategy, 'layers'],
-  [strings.crop, 'sprout'], [strings.plan, 'redo'],
+  [strings.crop, 'sprout'], [strings.plan, 'redo'], [strings.monitor, 'cube'],
 ] as const satisfies readonly (readonly [string, IconName])[];
 
 export function StepBar({ current, reached, skipped, onStep }: {
@@ -37,8 +37,8 @@ export function StepBar({ current, reached, skipped, onStep }: {
   );
 }
 
-export function ScreenHeader({ title, subtitle, top, onBack, onCountry }: {
-  title: string; subtitle: string; top: number; onBack: () => void; onCountry: () => void;
+export function ScreenHeader({ title, subtitle, top, onBack, onCountry, onAccount }: {
+  title: string; subtitle: string; top: number; onBack: () => void; onCountry: () => void; onAccount?: () => void;
 }) {
   return (
     <View style={[styles.header, { paddingTop: top }]} pointerEvents="box-none">
@@ -48,6 +48,7 @@ export function ScreenHeader({ title, subtitle, top, onBack, onCountry }: {
         <Label variant="title" accessibilityRole="header">{title}</Label>
         <Label variant="caption" tone="sage" style={styles.subtitle}>{subtitle}</Label>
       </View>
+      {onAccount && <IconButton name="user" label={strings.account} onPress={onAccount} />}
       <IconButton name="pin" label={strings.changeCountry} onPress={onCountry} />
     </View>
   );

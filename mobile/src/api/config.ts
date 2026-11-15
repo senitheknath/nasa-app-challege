@@ -1,2 +1,2 @@
-export const useMocks = process.env.EXPO_PUBLIC_USE_MOCKS !== 'false';
-export const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+export const useMocks = false;
+export const baseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://127.0.0.1:8000').replace(/\/+$/, '');
