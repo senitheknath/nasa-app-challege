@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TERRAFORGE AGRO Backend User Input Data Contract",
+  "description": "Standardized payload contract consumed by the agricultural intelligence backend service",
+  "examples": {
+    "condition_1_active_standing_crop": {
+      "schemaVersion": "2.1.0",
+      "generatedAt": "2026-11-13T16:45:00.000Z",
+      "territory": {
+        "countryCode": "LK",
+        "countryName": "Sri Lanka",
+        "agroGridZone": "Tropical Agro-Climatic Grid"
+      },
+      "parcelDemarcation": {
+        "areaHectares": 10.00,
+        "areaAcres": 24.71,
+        "perimeterKm": 1.280,
+        "polygonVertices": [
+          { "lat": 7.8731, "lng": 80.7718 },
+          { "lat": 7.8755, "lng": 80.7760 },
+          { "lat": 7.8710, "lng": 80.7785 }
+        ]
+      },
+      "selectedStrategy": "current",
+      "activeCropConfiguration": {
+        "cropId": "rice",
+        "cropDetails": {
+          "id": "rice",
+          "name": "Paddy Rice (Maha / Yala)",
+          "category": "Cereals",
+          "emoji": "🌾",
+          "baseYieldHa": 5.2,
+          "baseRevenueHa": 2200,
+          "waterReq": 0.85,
+          "soilBenefit": 0.65,
+          "growingDurationDays": 120
+        },
+        "sowingStartDate": "2026-10-01",
+        "daysSincePlanting": 43,
+        "estimatedHarvestDate": "2027-01-29"
+      },
+      "constraintsAndPriorities": {
+        "irrigationAccess": "limited",
+        "availableEquipment": ["tractor", "harvester", "pump"],
+        "targetMarkets": ["regional", "export"],
+        "priorityWeights": {
+          "waterSaving": 0.80,
+          "soilHealth": 0.75,
+          "income": 0.90,
+          "erosionControl": 0.70,
+          "forage": 0.45
+        }
+      }
+    },
+    "condition_2_crop_rotation_cycle": {
+      "schemaVersion": "2.1.0",
+      "generatedAt": "2026-11-13T16:45:00.000Z",
+      "territory": {
+        "countryCode": "LK",
+        "countryName": "Sri Lanka",
+        "agroGridZone": "Tropical Agro-Climatic Grid"
+      },
+      "parcelDemarcation": {
+        "areaHectares": 14.50,
+        "areaAcres": 35.83,
+        "perimeterKm": 1.540,
+        "polygonVertices": []
+      },
+      "selectedStrategy": "rotation",
+      "cropRotationCycle": {
+        "activeSeason": "maha",
+        "totalSeasonsConfigured": 2,
+        "seasons": [
+          {
+            "seasonId": "maha",
+            "seasonName": "Maha Season (North-East Monsoon)",
+            "startDate": "2026-10-01",
+            "harvestDate": "2027-03-31",
+            "cycleDurationDays": 181,
+            "plantedCrops": [
+              {
+                "id": "rice",
+                "name": "Paddy Rice (Maha / Yala)",
+                "category": "Cereals",
+                "baseYieldHa": 5.2,
+                "baseRevenueHa": 2200
+              },
+              {
+                "id": "corn",
+                "name": "Industrial Maize",
+                "category": "Cereals",
+                "baseYieldHa": 7.5,
+                "baseRevenueHa": 2600
+              }
+            ]
+          },
+          {
+            "seasonId": "yala",
+            "seasonName": "Yala Season (South-West Monsoon)",
+            "startDate": "2027-05-01",
+            "harvestDate": "2027-08-31",
+            "cycleDurationDays": 122,
+            "plantedCrops": [
+              {
+                "id": "soybeans",
+                "name": "High-Protein Soybeans",
+                "category": "Legumes",
+                "baseYieldHa": 3.2,
+                "baseRevenueHa": 2500
+              }
+            ]
+          }
+        ]
+      },
+      "constraintsAndPriorities": {
+        "irrigationAccess": "full",
+        "availableEquipment": ["tractor", "harvester", "drone", "pump"],
+        "targetMarkets": ["regional", "export", "board"],
+        "priorityWeights": {
+          "waterSaving": 0.85,
+          "soilHealth": 0.80,
+          "income": 0.95,
+          "erosionControl": 0.65,
+          "forage": 0.40
+        }
+      }
+    },
+    "condition_3_no_crop_rotation_fallow": {
+      "schemaVersion": "2.1.0",
+      "generatedAt": "2026-11-13T16:45:00.000Z",
+      "territory": {
+        "countryCode": "LK",
+        "countryName": "Sri Lanka",
+        "agroGridZone": "Tropical Agro-Climatic Grid"
+      },
+      "parcelDemarcation": {
+        "areaHectares": 8.20,
+        "areaAcres": 20.26,
+        "perimeterKm": 1.120,
+        "polygonVertices": []
+      },
+      "selectedStrategy": "none",
+      "fallowSoilProfile": {
+        "status": "raw_fallow_soil",
+        "description": "No prior crop rotation sequencing configured. Soil modeled on virgin / rested baseline.",
+        "bypassedSteps": ["Step 04: Crop Calibration & Growth Windows"]
+      },
+      "constraintsAndPriorities": {
+        "irrigationAccess": "none",
+        "availableEquipment": ["tractor"],
+        "targetMarkets": ["regional"],
+        "priorityWeights": {
+          "waterSaving": 0.60,
+          "soilHealth": 0.90,
+          "income": 0.50,
+          "erosionControl": 0.85,
+          "forage": 0.30
+        }
+      }
+    }
+  }
+}
