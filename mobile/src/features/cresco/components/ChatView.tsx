@@ -73,8 +73,7 @@ export function ChatView({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-  const { width, height } = useWindowDimensions();
-  const compactHeader = keyboardOpen && height < 760;
+  const { width } = useWindowDimensions();
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -109,60 +108,60 @@ export function ChatView({
 
   return (
     <View style={styles.root}>
-      {/* Active farm & model bar */}
-      <Surface kind="glass" style={styles.statusBar}>
-        <View style={styles.statusTopRow}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onOpenFarms}
-            style={({ pressed }) => [styles.farmIndicator, pressed && styles.pressed]}
-          >
-            <View style={styles.liveDot} />
-            <Label variant="smallBold" tone="cream" numberOfLines={1} style={styles.flex}>
-              Using data from {farmLabel}
-            </Label>
-          </Pressable>
-          <View style={styles.modelBadge}>
-            <Label variant="label" tone="accent">{model || CRESCO_DEFAULT_MODEL}</Label>
+      {/* Active farm & model bar (hidden while keyboard is open so chat history has full room) */}
+      {!keyboardOpen && (
+        <Surface kind="glass" style={styles.statusBar}>
+          <View style={styles.statusTopRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onOpenFarms}
+              style={({ pressed }) => [styles.farmIndicator, pressed && styles.pressed]}
+            >
+              <View style={styles.liveDot} />
+              <Label variant="smallBold" tone="cream" numberOfLines={1} style={styles.flex}>
+                Using data from {farmLabel}
+              </Label>
+            </Pressable>
+            <View style={styles.modelBadge}>
+              <Label variant="label" tone="accent">{model || CRESCO_DEFAULT_MODEL}</Label>
+            </View>
           </View>
-        </View>
 
-        {!compactHeader && (
           <View style={[styles.controlsRow, width < 360 && styles.controlsRowWrap]}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={clearing || sending || messages.length === 0}
-            onPress={onClear}
-            style={({ pressed }) => [
-              styles.controlBtn,
-              (clearing || sending || messages.length === 0) && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Icon name="trash" size={14} color={colors.sage} />
-            <Label variant="label" tone="sage">{clearing ? 'Clearing...' : 'Clear Chat'}</Label>
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={clearing || sending || messages.length === 0}
+              onPress={onClear}
+              style={({ pressed }) => [
+                styles.controlBtn,
+                (clearing || sending || messages.length === 0) && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Icon name="trash" size={14} color={colors.sage} />
+              <Label variant="label" tone="sage">{clearing ? 'Clearing...' : 'Clear Chat'}</Label>
+            </Pressable>
 
-          <Pressable
-            accessibilityRole="button"
-            disabled={disconnecting}
-            onPress={onDisconnect}
-            style={({ pressed }) => [
-              styles.controlBtn,
-              styles.disconnectBtn,
-              disconnecting && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Label variant="label" tone="danger">
-              {disconnecting ? 'Disconnecting...' : 'Disconnect / Replace Key'}
-            </Label>
-          </Pressable>
-        </View>
-        )}
-      </Surface>
+            <Pressable
+              accessibilityRole="button"
+              disabled={disconnecting}
+              onPress={onDisconnect}
+              style={({ pressed }) => [
+                styles.controlBtn,
+                styles.disconnectBtn,
+                disconnecting && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Label variant="label" tone="danger">
+                {disconnecting ? 'Disconnecting...' : 'Disconnect / Replace Key'}
+              </Label>
+            </Pressable>
+          </View>
+        </Surface>
+      )}
 
-      {justConnected && messages.length === 0 && (
+      {justConnected && messages.length === 0 && !keyboardOpen && (
         <Surface kind="highlight" rounding={radius.tile} style={styles.successBanner}>
           <Icon name="check" size={16} color={colors.accent} />
           <Label variant="caption" tone="cream" style={styles.flex}>
