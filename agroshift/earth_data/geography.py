@@ -36,7 +36,7 @@ def search_places(name, country_code=""):
         if api_key:
             params["apikey"] = api_key
         try:
-            response = get(f"https://{host}/v1/search", params, stream=False)
+            response = get(f"https://{host}/v1/search", params, stream=False, timeout=(3, 5))
             try:
                 payload = response.json()
             finally:
