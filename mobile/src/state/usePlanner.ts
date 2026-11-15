@@ -6,6 +6,101 @@ export type GeoPoint = { latitude: number; longitude: number };
 
 export type RotationFilterId = 'default' | 'water' | 'soil' | 'pest' | 'ease';
 
+export type UncertaintyPreset = 'conservative' | 'balanced' | 'flexible' | 'custom';
+
+export type ExpiryThresholds = {
+  expirySafetyDays: number;
+  collisionThresholdPct: number;
+  weatherVolatility: number;
+};
+
+export const UNCERTAINTY_PRESETS: Record<Exclude<UncertaintyPreset, 'custom'>, ExpiryThresholds> = {
+  conservative: { expirySafetyDays: 14, collisionThresholdPct: 10, weatherVolatility: 0.28 },
+  balanced: { expirySafetyDays: 7, collisionThresholdPct: 25, weatherVolatility: 0.18 },
+  flexible: { expirySafetyDays: 3, collisionThresholdPct: 40, weatherVolatility: 0.10 },
+};
+
+const THRESHOLDS_STORAGE_KEY = 'cresco.expiry-thresholds';
+
+function clampSafetyDays(value: number): number {
+  if (!Number.isFinite(value)) return 7;
+  return Math.round(Math.max(0, Math.min(35, value)));
+}
+
+function clampCollisionPct(value: number): number {
+  if (!Number.isFinite(value)) return 25;
+  return Math.round(Math.max(5, Math.min(75, value)));
+}
+
+function clampVolatility(value: number): number {
+  if (!Number.isFinite(value)) return 0.18;
+  return Number(Math.max(0.05, Math.min(0.5, value)).toFixed(2));
+}
+
+function detectPreset(thresholds: ExpiryThresholds): UncertaintyPreset {
+  for (const preset of ['conservative', 'balanced', 'flexible'] as const) {
+    const target = UNCERTAINTY_PRESETS[preset];
+    if (
+      thresholds.expirySafetyDays === target.expirySafetyDays &&
+      thresholds.collisionThresholdPct === target.collisionThresholdPct &&
+      Math.abs(thresholds.weatherVolatility - target.weatherVolatility) < 0.005
+    ) {
+      return preset;
+    }
+  }
+  return 'custom';
+}
+
+function getWebStorage(): Storage | null {
+  try {
+    if (typeof window !== 'undefined' && 'localStorage' in window && window.localStorage) {
+      return window.localStorage;
+    }
+  } catch {
+    // Ignore storage unavailability (native/SSR/Jest)
+  }
+  return null;
+}
+
+function readStoredThresholds(): Partial<ExpiryThresholds & { uncertaintyPreset: UncertaintyPreset }> {
+  try {
+    const storage = getWebStorage();
+    if (storage) {
+      const raw = storage.getItem(THRESHOLDS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Partial<ExpiryThresholds>;
+      if (!parsed || typeof parsed !== 'object') return {};
+      const merged: ExpiryThresholds = {
+        expirySafetyDays: parsed.expirySafetyDays !== undefined ? clampSafetyDays(parsed.expirySafetyDays) : 7,
+        collisionThresholdPct: parsed.collisionThresholdPct !== undefined ? clampCollisionPct(parsed.collisionThresholdPct) : 25,
+        weatherVolatility: parsed.weatherVolatility !== undefined ? clampVolatility(parsed.weatherVolatility) : 0.18,
+      };
+      return {
+        ...merged,
+        uncertaintyPreset: detectPreset(merged),
+      };
+    }
+  } catch {
+    // Ignore storage unavailability (native/SSR/Jest)
+  }
+  return {};
+}
+
+function writeStoredThresholds(thresholds: ExpiryThresholds | null): void {
+  try {
+    const storage = getWebStorage();
+    if (storage) {
+      if (!thresholds) {
+        storage.removeItem(THRESHOLDS_STORAGE_KEY);
+      } else {
+        storage.setItem(THRESHOLDS_STORAGE_KEY, JSON.stringify(thresholds));
+      }
+    }
+  } catch {
+    // Ignore storage unavailability (native/SSR/Jest)
+  }
+}
+
 export type SavedFarmInput = {
   id: number;
   name: string;
@@ -40,6 +135,9 @@ type Draft = {
   customCropIds: string[];
   tNowDay: number;
   observedNdvi: number | null;
+  uncertaintyPreset: UncertaintyPreset;
+  expirySafetyDays: number;
+  collisionThresholdPct: number;
   weatherVolatility: number;
 };
 
@@ -64,6 +162,9 @@ const initial = (): Draft => ({
   customCropIds: [],
   tNowDay: 42,
   observedNdvi: null,
+  uncertaintyPreset: 'balanced',
+  expirySafetyDays: 7,
+  collisionThresholdPct: 25,
   weatherVolatility: 0.18,
 });
 
@@ -119,6 +220,8 @@ type Planner = Draft & {
   setCustomCropIds: (cropIds: string[]) => void;
   toggleCustomCropId: (cropId: string) => void;
   setMonitorParams: (params: { tNowDay?: number; observedNdvi?: number | null; weatherVolatility?: number }) => void;
+  setUncertaintyPreset: (preset: UncertaintyPreset) => void;
+  setExpiryThresholds: (params: { expirySafetyDays?: number; collisionThresholdPct?: number; weatherVolatility?: number }) => void;
   setSavedFarmMeta: (farmId: number | null, farmName?: string) => void;
   loadSavedFarm: (farm: SavedFarmInput) => void;
   unlock: (step: number) => void;
@@ -127,10 +230,15 @@ type Planner = Draft & {
 
 export const usePlanner = create<Planner>()((set) => ({
   ...initial(),
+  ...readStoredThresholds(),
   chooseCountry: (countryId, center) => set((state) => {
     if (state.countryId === countryId && !center) return state;
     return {
       ...initial(),
+      uncertaintyPreset: state.uncertaintyPreset,
+      expirySafetyDays: state.expirySafetyDays,
+      collisionThresholdPct: state.collisionThresholdPct,
+      weatherVolatility: state.weatherVolatility,
       countryId,
       latitude: center?.latitude ?? state.latitude,
       longitude: center?.longitude ?? state.longitude,
@@ -198,11 +306,57 @@ export const usePlanner = create<Planner>()((set) => ({
     }
     return { customCropIds: [...state.customCropIds, cropId] };
   }),
-  setMonitorParams: (params) => set((state) => ({
-    tNowDay: params.tNowDay !== undefined ? params.tNowDay : state.tNowDay,
-    observedNdvi: params.observedNdvi !== undefined ? params.observedNdvi : state.observedNdvi,
-    weatherVolatility: params.weatherVolatility !== undefined ? params.weatherVolatility : state.weatherVolatility,
-  })),
+  setMonitorParams: (params) => set((state) => {
+    if (params.weatherVolatility === undefined) {
+      return {
+        tNowDay: params.tNowDay !== undefined ? params.tNowDay : state.tNowDay,
+        observedNdvi: params.observedNdvi !== undefined ? params.observedNdvi : state.observedNdvi,
+      };
+    }
+    const nextVol = clampVolatility(params.weatherVolatility);
+    const nextThresholds: ExpiryThresholds = {
+      expirySafetyDays: state.expirySafetyDays,
+      collisionThresholdPct: state.collisionThresholdPct,
+      weatherVolatility: nextVol,
+    };
+    writeStoredThresholds(nextThresholds);
+    return {
+      tNowDay: params.tNowDay !== undefined ? params.tNowDay : state.tNowDay,
+      observedNdvi: params.observedNdvi !== undefined ? params.observedNdvi : state.observedNdvi,
+      weatherVolatility: nextVol,
+      uncertaintyPreset: detectPreset(nextThresholds),
+    };
+  }),
+  setUncertaintyPreset: (preset) => set((state) => {
+    if (preset === 'custom') {
+      return { uncertaintyPreset: 'custom' };
+    }
+    const values = UNCERTAINTY_PRESETS[preset];
+    writeStoredThresholds(values);
+    return {
+      uncertaintyPreset: preset,
+      expirySafetyDays: values.expirySafetyDays,
+      collisionThresholdPct: values.collisionThresholdPct,
+      weatherVolatility: values.weatherVolatility,
+    };
+  }),
+  setExpiryThresholds: (params) => set((state) => {
+    const nextThresholds: ExpiryThresholds = {
+      expirySafetyDays:
+        params.expirySafetyDays !== undefined ? clampSafetyDays(params.expirySafetyDays) : state.expirySafetyDays,
+      collisionThresholdPct:
+        params.collisionThresholdPct !== undefined
+          ? clampCollisionPct(params.collisionThresholdPct)
+          : state.collisionThresholdPct,
+      weatherVolatility:
+        params.weatherVolatility !== undefined ? clampVolatility(params.weatherVolatility) : state.weatherVolatility,
+    };
+    writeStoredThresholds(nextThresholds);
+    return {
+      ...nextThresholds,
+      uncertaintyPreset: detectPreset(nextThresholds),
+    };
+  }),
   setSavedFarmMeta: (farmId, farmName) => set((state) => ({
     farmId,
     farmName: farmName !== undefined ? farmName : state.farmName,
@@ -229,5 +383,8 @@ export const usePlanner = create<Planner>()((set) => ({
     };
   }),
   unlock: (step) => set((state) => ({ reached: Math.max(state.reached, step) })),
-  reset: () => set(initial()),
+  reset: () => {
+    writeStoredThresholds(null);
+    set(initial());
+  },
 }));

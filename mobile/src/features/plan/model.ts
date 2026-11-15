@@ -16,6 +16,7 @@ export const planRequestSchema = fieldSchema.extend({
   areaHa: z.number().nullable().optional(),
   irrigation: z.enum(['rainfed', 'irrigated']).optional(),
   customCropIds: z.array(z.string()).optional(),
+  expirySafetyDays: z.number().min(0).max(35).optional(),
 });
 
 export const stageSchema = z.object({
@@ -34,6 +35,13 @@ export const harvestWindowSchema = z.union([
     late_maturity: z.string().optional(),
   }),
 ]);
+
+export const slotUncertaintyConeSchema = z.object({
+  early_end_date: z.string().nullable().optional(),
+  nominal_end_date: z.string().nullable().optional(),
+  late_end_date: z.string().nullable().optional(),
+  span_days: z.number().nullable().optional(),
+});
 
 export const slotSchema = z.object({
   crop_id: z.string(),
@@ -57,6 +65,7 @@ export const slotSchema = z.object({
   days_until_safe_expiry: z.number().nullable().optional(),
   days_until_hard_expiry: z.number().nullable().optional(),
   collision_probability_pct: z.number().nullable().optional(),
+  uncertainty_cone: slotUncertaintyConeSchema.nullable().optional(),
 });
 
 export const turnaroundSummarySchema = z.object({
@@ -108,6 +117,7 @@ export const rotationOptionSchema = z.object({
     easiness_tier: z.string().nullable().optional(),
     easiness_score: z.number().nullable().optional(),
     factors: z.object({
+      turnaround_expiry_pressure: z.number().nullable().optional(),
       water_irrigation_dependency: z.number().nullable().optional(),
       soil_nutrient_intervention: z.number().nullable().optional(),
       pest_pathogen_vigilance: z.number().nullable().optional(),
@@ -144,7 +154,15 @@ export const timelineSchema = z.object({
   delaySlackDays: z.number().nullable().optional(),
   safeExpiryDate: z.string().nullable().optional(),
   hardExpiryDate: z.string().nullable().optional(),
+  daysUntilSafeExpiry: z.number().nullable().optional(),
+  daysUntilHardExpiry: z.number().nullable().optional(),
   collisionProbabilityPct: z.number().nullable().optional(),
+  uncertaintyCone: slotUncertaintyConeSchema.nullable().optional(),
+  growthCycleDays: z.object({
+    minimum: z.number(),
+    nominal: z.number(),
+    maximum: z.number(),
+  }).nullable().optional(),
   kcMax: z.number().nullable().optional(),
 });
 
@@ -152,6 +170,9 @@ export const planSchema = z.object({
   hectares: z.number().nonnegative(),
   strategyTag: z.string().min(1),
   mode: z.string().optional(),
+  thresholdConfig: z.object({
+    expiryBufferDays: z.number().optional(),
+  }).nullable().optional(),
   crop: cropSchema,
   timeline: z.array(timelineSchema),
   rotations: z.array(rotationOptionSchema).optional(),
@@ -173,6 +194,16 @@ export type MappedStage = {
   percent: number;
 };
 
+export type SlotUncertaintyCone = {
+  earlyEndDate?: string;
+  nominalEndDate?: string;
+  lateEndDate?: string;
+  spanDays?: number;
+  rawEarlyEndDate?: string;
+  rawNominalEndDate?: string;
+  rawLateEndDate?: string;
+};
+
 export type MappedSlot = {
   cropId: string;
   cropName: string;
@@ -180,18 +211,24 @@ export type MappedSlot = {
   window?: string;
   sowingDate: string;
   harvestDate: string;
+  rawSowingDate?: string;
+  rawHarvestDate?: string;
   dateSpan: string;
   harvestWindow?: string;
   growthDays?: string;
+  growthCycleDays?: { minimum: number; nominal: number; maximum: number };
   stages: MappedStage[];
   kcMax?: number;
   delaySlackDays?: number;
   turnaroundBufferDays?: number;
   safeExpiryDate?: string;
   hardExpiryDate?: string;
+  rawSafeExpiryDate?: string;
+  rawHardExpiryDate?: string;
   daysUntilSafeExpiry?: number;
   daysUntilHardExpiry?: number;
   collisionProbabilityPct?: number;
+  uncertaintyCone?: SlotUncertaintyCone;
   order: number;
   status: 'Current' | 'Upcoming' | 'Planned';
   shortSeason: string;
@@ -213,6 +250,9 @@ export type RotationOption = {
   overallStatus?: string;
   summary?: string;
   easeAdjustedScore?: number;
+  easinessScore?: number;
+  easinessTier?: string;
+  turnaroundExpiryPressure?: number;
   feasible: boolean;
   totalAgronomicScore: number;
   safeExpiryDate?: string;
@@ -262,12 +302,20 @@ export type PlanSeason = {
   harvestWindow?: string;
   family?: string;
   growthDays?: string;
+  growthCycleDays?: { minimum: number; nominal: number; maximum: number };
   stages?: MappedStage[];
   turnaroundBufferDays?: number;
   delaySlackDays?: number;
   safeExpiryDate?: string;
   hardExpiryDate?: string;
+  rawSowingDate?: string;
+  rawHarvestDate?: string;
+  rawSafeExpiryDate?: string;
+  rawHardExpiryDate?: string;
+  daysUntilSafeExpiry?: number;
+  daysUntilHardExpiry?: number;
   collisionProbabilityPct?: number;
+  uncertaintyCone?: SlotUncertaintyCone;
   kcMax?: number;
 };
 
@@ -275,6 +323,9 @@ export type Plan = {
   area: string;
   strategy: string;
   mode: string;
+  thresholdConfig?: {
+    expiryBufferDays?: number;
+  };
   crop: Crop;
   first: PlanSeason;
   nextCrop?: string;
@@ -391,6 +442,35 @@ function deriveRotationBadge(slots: readonly SlotDto[], index: number): string {
   return 'Balanced cycle';
 }
 
+function mapSlotUncertaintyCone(
+  cone?: z.infer<typeof slotUncertaintyConeSchema> | null,
+  harvestWindow?: z.infer<typeof harvestWindowSchema> | null,
+  growthCycleDays?: { minimum: number; nominal: number; maximum: number } | null,
+  fallbackNominalDate?: string,
+): SlotUncertaintyCone | undefined {
+  const hwObj = harvestWindow && typeof harvestWindow === 'object' ? harvestWindow : null;
+  const earlyIso = cone?.early_end_date ?? hwObj?.early_maturity ?? undefined;
+  const nominalIso = cone?.nominal_end_date ?? hwObj?.nominal_maturity ?? fallbackNominalDate ?? undefined;
+  const lateIso = cone?.late_end_date ?? hwObj?.late_maturity ?? undefined;
+  const spanDays =
+    cone?.span_days ??
+    (growthCycleDays ? Math.max(0, growthCycleDays.maximum - growthCycleDays.minimum) : undefined);
+
+  if (!cone && !earlyIso && !lateIso && spanDays === undefined) {
+    return undefined;
+  }
+
+  return {
+    earlyEndDate: earlyIso ? formatDate(earlyIso) : undefined,
+    nominalEndDate: nominalIso ? formatDate(nominalIso) : undefined,
+    lateEndDate: lateIso ? formatDate(lateIso) : undefined,
+    spanDays: spanDays ?? undefined,
+    rawEarlyEndDate: earlyIso ?? undefined,
+    rawNominalEndDate: nominalIso ?? undefined,
+    rawLateEndDate: lateIso ?? undefined,
+  };
+}
+
 function mapSlot(slot: SlotDto, index: number): MappedSlot {
   const sowDate = parseCalendarDate(slot.sowing_date);
   const harvDate = parseCalendarDate(slot.harvest_nominal_date);
@@ -417,6 +497,12 @@ function mapSlot(slot: SlotDto, index: number): MappedSlot {
     ? Math.round(Math.min(95, Math.max(25, slot.kc_max * 65)))
     : 55;
   const soilBenefit = deriveSoilBenefit(slot.family);
+  const uncertaintyCone = mapSlotUncertaintyCone(
+    slot.uncertainty_cone,
+    slot.harvest_window,
+    slot.growth_cycle_days,
+    slot.harvest_nominal_date,
+  );
   return {
     cropId: slot.crop_id,
     cropName: slot.crop_name,
@@ -424,18 +510,24 @@ function mapSlot(slot: SlotDto, index: number): MappedSlot {
     window: slot.window ?? undefined,
     sowingDate,
     harvestDate,
+    rawSowingDate: slot.sowing_date,
+    rawHarvestDate: slot.harvest_nominal_date,
     dateSpan,
     harvestWindow: formatHarvestWindow(slot.harvest_window),
     growthDays,
+    growthCycleDays: slot.growth_cycle_days ?? undefined,
     stages: mapStages(slot.stages ?? undefined),
     kcMax: slot.kc_max ?? undefined,
     delaySlackDays: slot.delay_slack_days ?? undefined,
     turnaroundBufferDays: slot.turnaround_buffer_after_days ?? undefined,
     safeExpiryDate: slot.safe_expiry_date ? formatDate(slot.safe_expiry_date) : undefined,
     hardExpiryDate: slot.hard_expiry_date ? formatDate(slot.hard_expiry_date) : undefined,
+    rawSafeExpiryDate: slot.safe_expiry_date ?? undefined,
+    rawHardExpiryDate: slot.hard_expiry_date ?? undefined,
     daysUntilSafeExpiry: slot.days_until_safe_expiry ?? undefined,
     daysUntilHardExpiry: slot.days_until_hard_expiry ?? undefined,
     collisionProbabilityPct: slot.collision_probability_pct ?? undefined,
+    uncertaintyCone,
     order,
     status,
     shortSeason,
@@ -543,6 +635,9 @@ function mapRotation(rot: RotationOptionDto, index: number): RotationOption {
     overallStatus: rot.overall_status ?? tl.overall_status,
     summary: rot.summary,
     easeAdjustedScore: rot.ease_adjusted_score,
+    easinessScore: rot.easiness_matrix?.easiness_score ?? undefined,
+    easinessTier: rot.easiness_matrix?.easiness_tier ?? undefined,
+    turnaroundExpiryPressure: rot.easiness_matrix?.factors?.turnaround_expiry_pressure ?? undefined,
     feasible: tl.feasible ?? true,
     totalAgronomicScore: tl.total_agronomic_score ?? rot.score,
     safeExpiryDate: tl.safe_expiry_date ? formatDate(tl.safe_expiry_date) : undefined,
@@ -627,6 +722,12 @@ export function mapPlan(dto: PlanDto): Plan | null {
     const seasonCrop = mapCrop(season.crop);
     const sowingDate = season.sowingDate ? formatDate(season.sowingDate) : undefined;
     const harvestDate = season.harvestDate ? formatDate(season.harvestDate) : undefined;
+    const uncertaintyCone = mapSlotUncertaintyCone(
+      season.uncertaintyCone,
+      season.harvestWindow,
+      season.growthCycleDays,
+      season.harvestDate ?? undefined,
+    );
     return {
       id: season.id,
       season: season.season,
@@ -638,12 +739,20 @@ export function mapPlan(dto: PlanDto): Plan | null {
       harvestWindow: formatHarvestWindow(season.harvestWindow),
       family: season.family ?? undefined,
       growthDays: season.growthDays ?? undefined,
+      growthCycleDays: season.growthCycleDays ?? undefined,
       stages: mapStages(season.stages ?? undefined),
       turnaroundBufferDays: season.turnaroundBufferDays ?? undefined,
       delaySlackDays: season.delaySlackDays ?? undefined,
       safeExpiryDate: season.safeExpiryDate ? formatDate(season.safeExpiryDate) : undefined,
       hardExpiryDate: season.hardExpiryDate ? formatDate(season.hardExpiryDate) : undefined,
+      rawSowingDate: season.sowingDate ?? undefined,
+      rawHarvestDate: season.harvestDate ?? undefined,
+      rawSafeExpiryDate: season.safeExpiryDate ?? undefined,
+      rawHardExpiryDate: season.hardExpiryDate ?? undefined,
+      daysUntilSafeExpiry: season.daysUntilSafeExpiry ?? undefined,
+      daysUntilHardExpiry: season.daysUntilHardExpiry ?? undefined,
       collisionProbabilityPct: season.collisionProbabilityPct ?? undefined,
+      uncertaintyCone,
       kcMax: season.kcMax ?? undefined,
     };
   });
@@ -667,12 +776,20 @@ export function mapPlan(dto: PlanDto): Plan | null {
       harvestWindow: slot.harvestWindow,
       family: slot.family,
       growthDays: slot.growthDays,
+      growthCycleDays: slot.growthCycleDays,
       stages: slot.stages,
       turnaroundBufferDays: slot.turnaroundBufferDays,
       delaySlackDays: slot.delaySlackDays,
       safeExpiryDate: slot.safeExpiryDate,
       hardExpiryDate: slot.hardExpiryDate,
+      rawSowingDate: slot.rawSowingDate,
+      rawHarvestDate: slot.rawHarvestDate,
+      rawSafeExpiryDate: slot.rawSafeExpiryDate,
+      rawHardExpiryDate: slot.rawHardExpiryDate,
+      daysUntilSafeExpiry: slot.daysUntilSafeExpiry,
+      daysUntilHardExpiry: slot.daysUntilHardExpiry,
       collisionProbabilityPct: slot.collisionProbabilityPct,
+      uncertaintyCone: slot.uncertaintyCone,
       kcMax: slot.kcMax,
     }));
   }
@@ -683,6 +800,7 @@ export function mapPlan(dto: PlanDto): Plan | null {
     area: formatUnit(dto.hectares, strings.units.hectares, 1),
     strategy: dto.strategyTag,
     mode: dto.mode ?? (rotations.length > 0 ? 'continuous' : 'standard'),
+    ...(dto.thresholdConfig ? { thresholdConfig: dto.thresholdConfig } : {}),
     crop,
     first: timeline[0],
     nextCrop: rotations[0]?.slots[1]?.cropName ?? timeline[1]?.crop.name,

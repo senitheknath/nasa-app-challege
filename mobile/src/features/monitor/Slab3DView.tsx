@@ -5,9 +5,23 @@ import Svg, { Circle, Defs, Line, LinearGradient, Polygon, Polyline, Stop } from
 import { Label, Surface } from '@/components/primitives';
 import { colors, radius, space } from '@/theme/tokens';
 import { formatNumber } from '@/utils/format';
-import { getSoilTextureRgb, type Slab3DDto, type TerrainVertexDto } from './model';
+import { getSoilTextureRgb, type Slab3DDto } from './model';
+import {
+  buildVertexMatrices,
+  clamp,
+  isUnitSquareUv,
+  lerp,
+  pointInPolyUv,
+  polygonOrientation,
+  project3D,
+  pts,
+  sampleHydroSurface,
+  snapQuadToPoly,
+  type Camera,
+  type Projected,
+  type UV,
+} from './terrainGeometry';
 
-type Camera = { azimuth: number; tilt: number; zoom: number };
 type HeatmapMode = 'moisture' | 'precip' | 'ph' | 'ndvi' | 'heat' | 'none';
 
 const HEATMAPS: readonly { id: HeatmapMode; label: string; minLabel: string; maxLabel: string; lowCol: string; highCol: string }[] = [
@@ -24,182 +38,6 @@ const PRESETS: readonly { id: string; label: string; camera: Camera }[] = [
   { id: 'top', label: 'Top-Down', camera: { azimuth: 0, tilt: 82, zoom: 1.08 } },
   { id: 'cutaway', label: 'Soil Cutaway', camera: { azimuth: -48, tilt: 16, zoom: 1.05 } },
 ];
-
-type Vec3 = { x: number; y: number; z: number };
-type Projected = { sx: number; sy: number; depth: number };
-
-function project3D(p: Vec3, cam: Camera, width: number, height: number): Projected {
-  const az = (cam.azimuth * Math.PI) / 180;
-  const ti = (cam.tilt * Math.PI) / 180;
-
-  const cosA = Math.cos(az);
-  const sinA = Math.sin(az);
-  const xr = p.x * cosA - p.y * sinA;
-  const yr = p.x * sinA + p.y * cosA;
-  const zr = p.z;
-
-  const cosT = Math.cos(ti);
-  const sinT = Math.sin(ti);
-  const yView = yr * cosT - zr * sinT;
-  const zView = yr * sinT + zr * cosT;
-
-  const dist = 4.6;
-  const scale = dist / Math.max(1.5, dist + yView * 0.65);
-  const span = Math.min(width, height) * 0.34 * cam.zoom;
-
-  return {
-    sx: width / 2 + xr * span * scale,
-    sy: height * 0.49 - zView * span * scale,
-    depth: yView,
-  };
-}
-
-function pts(list: Projected[]): string {
-  return list.map((p) => `${p.sx.toFixed(1)},${p.sy.toFixed(1)}`).join(' ');
-}
-
-function clamp(val: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, val));
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-type UV = { u: number; v: number };
-
-function isUnitSquareUv(poly: UV[]): boolean {
-  if (poly.length !== 4) return false;
-  return poly.every((p) => (Math.abs(p.u) < 0.02 || Math.abs(p.u - 1) < 0.02) && (Math.abs(p.v) < 0.02 || Math.abs(p.v - 1) < 0.02));
-}
-
-function pointInPolyUv(u: number, v: number, poly: UV[]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const ui = poly[i].u;
-    const vi = poly[i].v;
-    const uj = poly[j].u;
-    const vj = poly[j].v;
-    if ((vi > v) !== (vj > v) && u < ((uj - ui) * (v - vi)) / (vj - vi || 1e-12) + ui) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-function polygonOrientation(poly: UV[]): number {
-  let area2 = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    area2 += a.u * b.v - b.u * a.v;
-  }
-  return area2 >= 0 ? 1 : -1;
-}
-
-function raySegmentIntersect(
-  ox: number,
-  oy: number,
-  dx: number,
-  dy: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number | null {
-  const sx = bx - ax;
-  const sy = by - ay;
-  const denom = dx * sy - dy * sx;
-  if (Math.abs(denom) < 1e-12) return null;
-  const qpx = ax - ox;
-  const qpy = ay - oy;
-  const t = (qpx * sy - qpy * sx) / denom;
-  const u = (qpx * dy - qpy * dx) / denom;
-  if (t >= 0 && t <= 1.0001 && u >= -1e-6 && u <= 1.000001) {
-    return t;
-  }
-  return null;
-}
-
-function snapQuadToPoly(corners: UV[], poly: UV[]): UV[] | null {
-  const insideFlags = corners.map((c) => pointInPolyUv(c.u, c.v, poly));
-  const insideCount = insideFlags.filter(Boolean).length;
-  if (insideCount === 4) return corners;
-
-  const cu = corners.reduce((s, p) => s + p.u, 0) / 4;
-  const cv = corners.reduce((s, p) => s + p.v, 0) / 4;
-  const centerInside = pointInPolyUv(cu, cv, poly);
-  if (insideCount === 0 && !centerInside) return null;
-
-  // Anchor inside point (prefer centroid if inside, else average of inside corners)
-  let au = cu;
-  let av = cv;
-  if (!centerInside) {
-    const ins = corners.filter((_, idx) => insideFlags[idx]);
-    au = ins.reduce((s, p) => s + p.u, 0) / ins.length;
-    av = ins.reduce((s, p) => s + p.v, 0) / ins.length;
-  }
-
-  return corners.map((pt, idx) => {
-    if (insideFlags[idx]) return pt;
-    const dx = pt.u - au;
-    const dy = pt.v - av;
-    let bestT = 1;
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i];
-      const b = poly[(i + 1) % poly.length];
-      const t = raySegmentIntersect(au, av, dx, dy, a.u, a.v, b.u, b.v);
-      if (t !== null && t < bestT) bestT = t;
-    }
-    return { u: au + dx * bestT, v: av + dy * bestT };
-  });
-}
-
-function sampleHydroSurface(
-  elev5x5: number[][],
-  wet5x5: number[][],
-  u: number,
-  v: number,
-  phase: number,
-): { elev: number; wet: number } {
-  const gx = clamp(u * 4, 0, 4);
-  const gy = clamp(v * 4, 0, 4);
-  const c0 = Math.min(3, Math.floor(gx));
-  const r0 = Math.min(3, Math.floor(gy));
-  const tx = gx - c0;
-  const ty = gy - r0;
-  const sx = tx * tx * (3 - 2 * tx);
-  const sy = ty * ty * (3 - 2 * ty);
-
-  const eTop = lerp(elev5x5[r0][c0], elev5x5[r0][c0 + 1], sx);
-  const eBot = lerp(elev5x5[r0 + 1][c0], elev5x5[r0 + 1][c0 + 1], sx);
-  const baseElev = lerp(eTop, eBot, sy);
-
-  const wTop = lerp(wet5x5[r0][c0], wet5x5[r0][c0 + 1], sx);
-  const wBot = lerp(wet5x5[r0 + 1][c0], wet5x5[r0 + 1][c0 + 1], sx);
-  const baseWet = lerp(wTop, wBot, sy);
-
-  // 10m dendritic channel carving & micro-relief harmonics
-  const cx = (u - 0.5) * 2;
-  const cy = (v - 0.5) * 2;
-  const meander = 0.22 * Math.sin(cy * 2.8 + phase);
-  const chanDist = Math.abs(cx - meander);
-  const valleyCarve = -0.16 * Math.exp(-((chanDist / 0.24) ** 2));
-  const tribDist = Math.abs(cy - 0.32 * Math.sin(cx * 3.1 - phase) - 0.14);
-  const tribMask = clamp((cx - meander + 0.05) * 2.4, 0, 1);
-  const tribCarve = -0.08 * Math.exp(-((tribDist / 0.12) ** 2)) * tribMask;
-  const microRelief = 0.04 * Math.sin(u * Math.PI * 3.2 + phase) * Math.cos(v * Math.PI * 2.8);
-
-  const wetChannel = Math.max(
-    Math.exp(-((chanDist / 0.11) ** 2)),
-    0.75 * Math.exp(-((tribDist / 0.09) ** 2)) * tribMask,
-  );
-
-  return {
-    elev: clamp(baseElev + valleyCarve + tribCarve + microRelief, 0, 1.15),
-    wet: clamp(baseWet * 0.55 + wetChannel * 0.55, 0, 1),
-  };
-}
 
 function soilTextureFill(
   usdaTexture: string | undefined,
@@ -319,42 +157,7 @@ export function Slab3DView({ slab }: { slab: Slab3DDto }) {
   const scene = useMemo(() => {
     const { width, height } = size;
     const mesh = slab.terrain_3d_mesh;
-    const gridN = Math.max(2, mesh.grid_size || 5);
-
-    const vertexMap = new Map<string, TerrainVertexDto>();
-    let minElev = Infinity;
-    let maxElev = -Infinity;
-    for (const v of mesh.vertices) {
-      vertexMap.set(`${v.row}:${v.col}`, v);
-      if (v.elevation_m < minElev) minElev = v.elevation_m;
-      if (v.elevation_m > maxElev) maxElev = v.elevation_m;
-    }
-    if (!Number.isFinite(minElev)) {
-      minElev = mesh.elevation_m;
-      maxElev = mesh.elevation_m + 1;
-    }
-    const elevSpan = Math.max(0.5, maxElev - minElev);
-
-    // Build 5x5 normalized elevation & wetness matrices for smooth sub-grid sampling
-    const elev5x5: number[][] = Array.from({ length: 5 }, (_, r) =>
-      Array.from({ length: 5 }, (_, c) => {
-        const rr = Math.min(gridN - 1, r);
-        const cc = Math.min(gridN - 1, c);
-        const v = vertexMap.get(`${rr}:${cc}`);
-        return v ? (v.elevation_m - minElev) / elevSpan : 0.35;
-      }),
-    );
-    const wet5x5: number[][] = Array.from({ length: 5 }, (_, r) =>
-      Array.from({ length: 5 }, (_, c) => {
-        const rr = Math.min(gridN - 1, r);
-        const cc = Math.min(gridN - 1, c);
-        const v = vertexMap.get(`${rr}:${cc}`);
-        return v?.s1_s2_wetness_idx ?? 0.4;
-      }),
-    );
-
-    const seed = Math.abs(Math.sin(slab.location.latitude * 12.9898 + slab.location.longitude * 78.233)) * 43758.5453;
-    const phase = (seed - Math.floor(seed)) * Math.PI * 2;
+    const { elev5x5, wet5x5, phase } = buildVertexMatrices(slab);
 
     const baseZ = 0.16;
     const reliefAmp = 0.34;

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useOffline, viewState } from '@/api/query';
@@ -25,8 +26,24 @@ import { useCrops } from '../crop/hooks';
 import { FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
+import {
+  evaluateRotationExpiry,
+  evaluateSlotExpiry,
+  type ExpiryThresholds,
+  type ExpiryUrgency,
+} from './expiryExplain';
 import { usePlan } from './hooks';
 import { rankRotationsByFilter, type Plan, type RotationFilterId, type RotationOption } from './model';
+
+const AMBER = '#F5C451';
+const AMBER_FILL = 'rgba(245, 196, 81, 0.14)';
+const AMBER_BORDER = 'rgba(245, 196, 81, 0.45)';
+
+function urgencyColor(urgency: ExpiryUrgency): string {
+  if (urgency === 'critical') return colors.danger;
+  if (urgency === 'tight') return AMBER;
+  return colors.accent;
+}
 
 const tabs = [
   { id: 'overview', label: strings.overview },
@@ -58,6 +75,19 @@ function buildFallbackSlots(plan: Plan): CarouselSlotItem[] {
     family: item.family ?? item.crop.category,
     dateSpan: item.dateSpan,
     growthDays: item.growthDays,
+    rawSowingDate: item.rawSowingDate,
+    rawHarvestDate: item.rawHarvestDate,
+    safeExpiryDate: item.safeExpiryDate,
+    hardExpiryDate: item.hardExpiryDate,
+    rawSafeExpiryDate: item.rawSafeExpiryDate,
+    rawHardExpiryDate: item.rawHardExpiryDate,
+    daysUntilSafeExpiry: item.daysUntilSafeExpiry,
+    daysUntilHardExpiry: item.daysUntilHardExpiry,
+    delaySlackDays: item.delaySlackDays,
+    turnaroundBufferDays: item.turnaroundBufferDays,
+    collisionProbabilityPct: item.collisionProbabilityPct,
+    growthCycleDays: item.growthCycleDays,
+    uncertaintyCone: item.uncertaintyCone,
   }));
 }
 
@@ -76,9 +106,12 @@ function Overview({
   slots,
   focusedIndex,
   hasInteracted,
+  thresholds,
   onFocusSlot,
   onReset,
   onOpenAlternatives,
+  onOpenThresholds,
+  onOpenMonitor,
 }: {
   plan: Plan;
   rotation?: RotationOption;
@@ -86,13 +119,18 @@ function Overview({
   slots: readonly CarouselSlotItem[];
   focusedIndex: number;
   hasInteracted: boolean;
+  thresholds: ExpiryThresholds;
   onFocusSlot: (index: number, markInteracted?: boolean) => void;
   onReset: () => void;
   onOpenAlternatives: () => void;
+  onOpenThresholds: () => void;
+  onOpenMonitor: () => void;
 }) {
   const { fontScale, width } = useWindowDimensions();
   const wrap = fontScale > 1.15 || width < 440;
-  const focusedSlot = slots[Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)))];
+  const safeIdx = Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)));
+  const focusedSlot = slots[safeIdx];
+  const nextFocusedCropName = slots[safeIdx + 1]?.cropName;
 
   const isBest = Boolean(rotation?.isBest || rotation?.rank === 1);
   const rankBadge = rotation?.isCustom
@@ -104,11 +142,20 @@ function Overview({
       : `Alternative #${rotation?.rank ?? 1}`;
   const sequenceTitle = rotation?.name || slots.map((slot) => slot.cropName).join(' → ');
 
+  const rotEval = useMemo(
+    () =>
+      evaluateRotationExpiry(
+        rotation ?? { name: sequenceTitle, slots },
+        thresholds,
+      ),
+    [rotation, sequenceTitle, slots, thresholds],
+  );
+
   const summaryStats = [
     ['Field Area', plan.area, false],
     ['Crop Stages', `${slots.length} crops`, true],
     ['Agronomic Fit', `${formatNumber(rotation?.totalAgronomicScore ?? 0)} pts`, true],
-    ['Turnaround', `${rotation?.turnaroundSummary?.bufferDays ?? 14}d buffer`, false],
+    ['Turnaround', `${rotation?.turnaroundSummary?.bufferDays ?? thresholds.expirySafetyDays}d buffer`, false],
   ] as const;
 
   return (
@@ -123,10 +170,27 @@ function Overview({
             <Label variant="smallBold" tone="accent">{rankBadge}</Label>
             <Label variant="chip" tone="cream" numberOfLines={1}>{sequenceTitle}</Label>
           </View>
-          <View style={styles.scorePill}>
-            <Label variant="smallBold" tone="forest950">
-              {formatNumber(rotation?.score ?? 0)} pts
-            </Label>
+          <View style={styles.highlightRight}>
+            <View style={styles.scorePill}>
+              <Label variant="smallBold" tone="forest950">
+                {formatNumber(rotation?.score ?? 0)} pts
+              </Label>
+            </View>
+            <View
+              style={[
+                styles.expiryHighlightPill,
+                rotEval.urgency === 'critical'
+                  ? styles.expiryHighlightCritical
+                  : rotEval.urgency === 'tight'
+                    ? styles.expiryHighlightTight
+                    : styles.expiryHighlightSafe,
+              ]}
+            >
+              <View style={[styles.expiryDot, { backgroundColor: urgencyColor(rotEval.urgency) }]} />
+              <Label variant="label" tone="cream" numberOfLines={1}>
+                {rotEval.shortPill}
+              </Label>
+            </View>
           </View>
         </Surface>
       </Pressable>
@@ -136,13 +200,20 @@ function Overview({
           slots={slots}
           focusedIndex={focusedIndex}
           hasInteracted={hasInteracted}
+          thresholds={thresholds}
           onFocusSlot={onFocusSlot}
           onReset={onReset}
         />
       )}
 
       {focusedSlot && (
-        <FocusedCropBanner slot={focusedSlot} totalSlots={slots.length} />
+        <FocusedCropBanner
+          slot={focusedSlot}
+          totalSlots={slots.length}
+          nextCropName={nextFocusedCropName}
+          thresholds={thresholds}
+          onOpenThresholds={onOpenThresholds}
+        />
       )}
 
       <Surface kind="card" rounding={radius.tile} style={styles.statsCard}>
@@ -158,33 +229,187 @@ function Overview({
             />
           ))}
         </View>
+
+        <View
+          style={[
+            styles.expirySummaryBox,
+            rotEval.urgency === 'critical'
+              ? styles.expirySummaryCritical
+              : rotEval.urgency === 'tight'
+                ? styles.expirySummaryTight
+                : styles.expirySummarySafe,
+          ]}
+        >
+          <View style={styles.expirySummaryHeader}>
+            <View style={styles.expirySummaryTitleRow}>
+              <View style={[styles.expiryDot, { backgroundColor: urgencyColor(rotEval.urgency) }]} />
+              <Label variant="smallBold" tone="cream" style={styles.breakable}>
+                {rotEval.headline}
+              </Label>
+            </View>
+            <Label variant="label" tone={rotEval.urgency === 'critical' ? 'danger' : 'accent'}>
+              {rotEval.badgeText}
+            </Label>
+          </View>
+          <Label variant="caption" tone="sage">
+            {rotEval.advisory}
+          </Label>
+
+          <View style={styles.thresholdActionsRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${strings.adjustThresholds} in Account and Farms`}
+              onPress={onOpenThresholds}
+              style={styles.thresholdActionPill}
+            >
+              <Label variant="smallBold" tone="accent" numberOfLines={1}>
+                {thresholds.expirySafetyDays}d buf · {thresholds.collisionThresholdPct}% alert · σ={thresholds.weatherVolatility.toFixed(2)} · {strings.adjustThresholds} →
+              </Label>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Track live drift in 3D Monitor"
+              onPress={onOpenMonitor}
+              style={styles.monitorActionPill}
+            >
+              <Icon name="activity" size={icons.badge} color={colors.cream} />
+              <Label variant="smallBold" tone="cream" numberOfLines={1}>
+                Track live drift →
+              </Label>
+            </Pressable>
+          </View>
+        </View>
       </Surface>
     </>
   );
 }
 
-function TurnaroundConnector({ bufferDays, nextCropName }: { bufferDays: number; nextCropName: string }) {
+type TurnaroundStatus = 'optimal' | 'tight' | 'collision' | 'excessive_fallow' | string;
+
+function resolveConnectorTone(status?: TurnaroundStatus) {
+  const key = (status ?? 'optimal').toLowerCase();
+  if (key === 'collision') {
+    return {
+      line: colors.dangerBorder,
+      bg: colors.dangerFill,
+      border: colors.dangerBorder,
+      icon: colors.danger,
+      labelTone: 'danger' as const,
+      tag: 'COLLISION RISK',
+    };
+  }
+  if (key === 'tight') {
+    return {
+      line: AMBER_BORDER,
+      bg: AMBER_FILL,
+      border: AMBER_BORDER,
+      icon: AMBER,
+      labelTone: 'cream' as const,
+      tag: 'TIGHT BUFFER',
+    };
+  }
+  if (key === 'excessive_fallow') {
+    return {
+      line: colors.border,
+      bg: colors.innerDark,
+      border: colors.border,
+      icon: colors.sage,
+      labelTone: 'sage' as const,
+      tag: 'EXTENDED FALLOW',
+    };
+  }
+  return {
+    line: colors.accentBorder,
+    bg: colors.forest800,
+    border: colors.accentBorder,
+    icon: colors.accent,
+    labelTone: 'accent' as const,
+    tag: 'OPTIMAL',
+  };
+}
+
+function TurnaroundConnector({
+  bufferDays,
+  nextCropName,
+  status,
+  advisory,
+}: {
+  bufferDays: number;
+  nextCropName: string;
+  status?: TurnaroundStatus;
+  advisory?: string;
+}) {
+  const tone = resolveConnectorTone(status);
   return (
     <View style={styles.connectorWrap}>
-      <View style={styles.connectorLine} />
-      <View style={styles.connectorPill}>
-        <Icon name="calendar" size={icons.badge} color={colors.accent} />
-        <Label variant="caption" tone="sage" numberOfLines={1} style={styles.connectorText}>
-          {bufferDays}d field prep & turnaround → Next:{' '}
-          <Label variant="smallBold" tone="accent">{nextCropName}</Label>
-        </Label>
+      <View style={[styles.connectorLine, { backgroundColor: tone.line }]} />
+      <View
+        style={[
+          styles.connectorPill,
+          { backgroundColor: tone.bg, borderColor: tone.border },
+        ]}
+      >
+        <View style={styles.connectorHeaderRow}>
+          <Icon name="calendar" size={icons.badge} color={tone.icon} />
+          <Label variant="caption" tone="cream" numberOfLines={1} style={styles.connectorText}>
+            {bufferDays}d turnaround ({tone.tag}) → Next:{' '}
+            <Label variant="smallBold" tone={tone.labelTone}>{nextCropName}</Label>
+          </Label>
+        </View>
+        {!!advisory && (
+          <Label variant="label" tone="sage" style={styles.connectorAdvisory}>
+            {advisory}
+          </Label>
+        )}
       </View>
-      <View style={styles.connectorLine} />
+      <View style={[styles.connectorLine, { backgroundColor: tone.line }]} />
     </View>
   );
 }
 
-function RotationTimeline({ plan, rotation }: { plan: Plan; rotation?: RotationOption }) {
+function RotationTimeline({
+  plan,
+  rotation,
+  thresholds,
+}: {
+  plan: Plan;
+  rotation?: RotationOption;
+  thresholds: ExpiryThresholds;
+}) {
   if (!rotation) {
     return (
       <View style={styles.timelineList}>
         {plan.timeline.map((item, index) => {
           const nextItem = plan.timeline[index + 1];
+          const slotEval = evaluateSlotExpiry(
+            {
+              cropName: item.crop.name,
+              rawSowingDate: item.rawSowingDate,
+              rawHarvestDate: item.rawHarvestDate,
+              safeExpiryDate: item.safeExpiryDate,
+              hardExpiryDate: item.hardExpiryDate,
+              rawSafeExpiryDate: item.rawSafeExpiryDate,
+              rawHardExpiryDate: item.rawHardExpiryDate,
+              daysUntilSafeExpiry: item.daysUntilSafeExpiry,
+              daysUntilHardExpiry: item.daysUntilHardExpiry,
+              delaySlackDays: item.delaySlackDays,
+              turnaroundBufferDays: item.turnaroundBufferDays,
+              collisionProbabilityPct: item.collisionProbabilityPct,
+              growthDays: item.growthDays,
+              growthCycleDays: item.growthCycleDays,
+              uncertaintyCone: item.uncertaintyCone,
+            },
+            thresholds,
+            nextItem?.crop.name,
+          );
+          const bufferDays = item.turnaroundBufferDays ?? thresholds.expirySafetyDays;
+          const connectorStatus =
+            (item.collisionProbabilityPct ?? 0) >= thresholds.collisionThresholdPct
+              ? 'collision'
+              : (item.daysUntilSafeExpiry != null && item.daysUntilSafeExpiry < thresholds.expirySafetyDays)
+                ? 'tight'
+                : 'optimal';
+
           return (
             <View key={item.id}>
               <TimelineCard
@@ -198,11 +423,28 @@ function RotationTimeline({ plan, rotation }: { plan: Plan; rotation?: RotationO
                 family={item.family ?? item.crop.category}
                 growthDays={item.growthDays}
                 stages={item.stages}
+                turnaround={item.turnaroundBufferDays != null ? `${item.turnaroundBufferDays}d` : undefined}
+                expiry={
+                  item.safeExpiryDate || item.hardExpiryDate
+                    ? `${item.safeExpiryDate ?? '–'} / ${item.hardExpiryDate ?? '–'}`
+                    : undefined
+                }
+                collisionPct={item.collisionProbabilityPct}
+                safeExpiryDate={item.safeExpiryDate}
+                hardExpiryDate={item.hardExpiryDate}
+                delaySlackDays={item.delaySlackDays}
+                uncertaintyCone={item.uncertaintyCone}
+                urgency={slotEval.urgency}
+                explanation={slotEval.explanation}
+                safeCountdownLabel={slotEval.safeCountdownLabel}
+                hardCountdownLabel={slotEval.hardCountdownLabel}
+                barMetrics={slotEval.barMetrics}
               />
               {nextItem && (
                 <TurnaroundConnector
-                  bufferDays={item.turnaroundBufferDays ?? 14}
+                  bufferDays={bufferDays}
                   nextCropName={nextItem.crop.name}
+                  status={connectorStatus}
                 />
               )}
             </View>
@@ -217,6 +459,23 @@ function RotationTimeline({ plan, rotation }: { plan: Plan; rotation?: RotationO
       {rotation.slots.map((slot, index) => {
         const nextSlot = rotation.slots[index + 1];
         const bufferDays = slot.turnaroundBufferDays ?? rotation.turnaroundSummary?.bufferDays ?? 14;
+        const slotEval = evaluateSlotExpiry(slot, thresholds, nextSlot?.cropName);
+        const slotCollision = slot.collisionProbabilityPct ?? 0;
+        const connectorStatus =
+          slotCollision >= thresholds.collisionThresholdPct ||
+          (slot.daysUntilHardExpiry != null && slot.daysUntilHardExpiry <= 0)
+            ? 'collision'
+            : index === 0 && rotation.turnaroundSummary?.status
+              ? rotation.turnaroundSummary.status
+              : slot.daysUntilSafeExpiry != null && slot.daysUntilSafeExpiry < thresholds.expirySafetyDays
+                ? 'tight'
+                : rotation.turnaroundSummary?.status ?? 'optimal';
+        const connectorAdvisory =
+          index === 0
+            ? rotation.turnaroundSummary?.advisory
+            : slotCollision >= thresholds.collisionThresholdPct
+              ? `${slot.cropName} carries ${Math.round(slotCollision)}% overlap risk into ${nextSlot?.cropName ?? 'next crop'}.`
+              : undefined;
 
         return (
           <View key={`${rotation.id}-${slot.cropId}-${index}`}>
@@ -231,11 +490,29 @@ function RotationTimeline({ plan, rotation }: { plan: Plan; rotation?: RotationO
               family={slot.family}
               growthDays={slot.growthDays}
               stages={slot.stages}
+              turnaround={slot.turnaroundBufferDays != null ? `${slot.turnaroundBufferDays}d` : undefined}
+              expiry={
+                slot.safeExpiryDate || slot.hardExpiryDate
+                  ? `${slot.safeExpiryDate ?? '–'} / ${slot.hardExpiryDate ?? '–'}`
+                  : undefined
+              }
+              collisionPct={slot.collisionProbabilityPct}
+              safeExpiryDate={slot.safeExpiryDate}
+              hardExpiryDate={slot.hardExpiryDate}
+              delaySlackDays={slot.delaySlackDays}
+              uncertaintyCone={slot.uncertaintyCone}
+              urgency={slotEval.urgency}
+              explanation={slotEval.explanation}
+              safeCountdownLabel={slotEval.safeCountdownLabel}
+              hardCountdownLabel={slotEval.hardCountdownLabel}
+              barMetrics={slotEval.barMetrics}
             />
             {nextSlot && (
               <TurnaroundConnector
                 bufferDays={bufferDays}
                 nextCropName={nextSlot.cropName}
+                status={connectorStatus}
+                advisory={connectorAdvisory}
               />
             )}
           </View>
@@ -262,9 +539,17 @@ export default function PlanScreen() {
   const selectRotation = usePlanner((draft) => draft.selectRotation);
   const rotationFilter = usePlanner((draft) => draft.rotationFilter);
   const customCropIds = usePlanner((draft) => draft.customCropIds);
+  const expirySafetyDays = usePlanner((draft) => draft.expirySafetyDays);
+  const collisionThresholdPct = usePlanner((draft) => draft.collisionThresholdPct);
+  const weatherVolatility = usePlanner((draft) => draft.weatherVolatility);
   const setRotationFilter = usePlanner((draft) => draft.setRotationFilter);
   const setCustomCropIds = usePlanner((draft) => draft.setCustomCropIds);
   const toggleCustomCropId = usePlanner((draft) => draft.toggleCustomCropId);
+
+  const thresholds = useMemo<ExpiryThresholds>(
+    () => ({ expirySafetyDays, collisionThresholdPct, weatherVolatility }),
+    [expirySafetyDays, collisionThresholdPct, weatherVolatility],
+  );
 
   const bootstrap = useCountryData();
   const strategies = useStrategies(countryId);
@@ -299,6 +584,7 @@ export default function PlanScreen() {
           cropId: selected.requiresCrop ? cropId ?? bootstrap.data?.defaultCropId : undefined,
           sowingDate,
           customCropIds: customCropIds.length > 0 ? customCropIds : undefined,
+          expirySafetyDays,
         }
       : null),
     [
@@ -316,12 +602,13 @@ export default function PlanScreen() {
       bootstrap.data?.defaultCropId,
       sowingDate,
       customCropIds,
+      expirySafetyDays,
     ],
   );
 
   const query = usePlan(draft);
   const baseDraftKey = draft
-    ? `${draft.countryId}|${draft.strategyId}|${draft.cropId ?? ''}|${draft.sowingDate}|${draft.irrigation}|${draft.latitude ?? ''}|${draft.longitude ?? ''}`
+    ? `${draft.countryId}|${draft.strategyId}|${draft.cropId ?? ''}|${draft.sowingDate}|${draft.irrigation}|${draft.latitude ?? ''}|${draft.longitude ?? ''}|${draft.expirySafetyDays ?? ''}`
     : '';
   const [retainedPlan, setRetainedPlan] = useState<{ key: string; data: Plan } | null>(null);
 
@@ -496,6 +783,7 @@ export default function PlanScreen() {
                           slots={slots}
                           focusedIndex={safeFocusedIndex}
                           hasInteracted={hasInteracted}
+                          thresholds={thresholds}
                           onFocusSlot={(idx, mark = true) => {
                             if (mark) setHasInteracted(true);
                             setFocusedIndex(idx);
@@ -508,11 +796,19 @@ export default function PlanScreen() {
                             tap();
                             setActive('alternatives');
                           }}
+                          onOpenThresholds={() => {
+                            tap();
+                            router.push('/login');
+                          }}
+                          onOpenMonitor={() => {
+                            tap();
+                            router.navigate('/monitor');
+                          }}
                         />
                       </>
                     )
                     : active === 'timeline'
-                      ? <RotationTimeline plan={plan} rotation={activeRotation} />
+                      ? <RotationTimeline plan={plan} rotation={activeRotation} thresholds={thresholds} />
                       : (
                         <>
                           {filterAndBuilder}
@@ -522,6 +818,7 @@ export default function PlanScreen() {
                                 rotations={rankedRotations}
                                 selectedId={activeRotation?.id}
                                 activeFilter={rotationFilter}
+                                thresholds={thresholds}
                                 onSelect={(id) => {
                                   tap();
                                   selectRotation(id);
@@ -564,31 +861,85 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   highlightLeft: { flex: 1, minWidth: 0, gap: space.xxs },
+  highlightRight: { alignItems: 'flex-end', gap: space.xs },
   scorePill: {
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
     borderRadius: radius.pill,
     backgroundColor: colors.accent,
   },
-  statsCard: { padding: space.lg },
+  expiryHighlightPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xxs + 1,
+    borderRadius: radius.pill,
+    borderWidth: size.hairline,
+  },
+  expiryHighlightSafe: { backgroundColor: colors.highlight, borderColor: colors.accentBorder },
+  expiryHighlightTight: { backgroundColor: AMBER_FILL, borderColor: AMBER_BORDER },
+  expiryHighlightCritical: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
+  expiryDot: { width: 7, height: 7, borderRadius: 4, flexShrink: 0 },
+  statsCard: { padding: space.lg, gap: space.md },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: space.md },
   quarterStat: { flexBasis: '25%', paddingEnd: space.sm },
   halfStat: { flexBasis: '50%', paddingEnd: space.sm },
+  expirySummaryBox: {
+    padding: space.md,
+    borderRadius: radius.tile,
+    borderWidth: size.hairline,
+    gap: space.xs,
+  },
+  expirySummarySafe: { backgroundColor: colors.innerDark, borderColor: colors.accentBorder },
+  expirySummaryTight: { backgroundColor: AMBER_FILL, borderColor: AMBER_BORDER },
+  expirySummaryCritical: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
+  expirySummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  expirySummaryTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, flex: 1, minWidth: 160 },
+  breakable: { flexShrink: 1 },
+  thresholdActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
+  thresholdActionPill: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.highlight,
+    borderWidth: size.hairline,
+    borderColor: colors.accentBorder,
+    flexShrink: 1,
+  },
+  monitorActionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.chip,
+    borderWidth: size.hairline,
+    borderColor: colors.border,
+  },
   timelineList: { gap: 0 },
   connectorWrap: { alignItems: 'center', paddingVertical: space.xxs },
   connectorLine: { width: 2, height: space.md, backgroundColor: colors.accentBorder },
   connectorPill: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: space.tight,
+    gap: space.xxs,
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
-    borderRadius: radius.pill,
+    borderRadius: radius.tile,
     backgroundColor: colors.forest800,
     borderWidth: size.hairline,
     borderColor: colors.accentBorder,
     maxWidth: '100%',
   },
+  connectorHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: space.tight, maxWidth: '100%' },
   connectorText: { flexShrink: 1 },
+  connectorAdvisory: { textAlign: 'center', paddingHorizontal: space.xs },
   emptyCard: { padding: space.lg, gap: space.xs },
 });

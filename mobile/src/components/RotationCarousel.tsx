@@ -8,6 +8,14 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
+import {
+  evaluateRotationExpiry,
+  evaluateSlotExpiry,
+  type ExpiryThresholds,
+  type ExpiryUrgency,
+} from '@/features/plan/expiryExplain';
+import type { SlotUncertaintyCone } from '@/features/plan/model';
+import { strings } from '@/i18n/strings';
 import { useTheme } from '@/theme/useTheme';
 import { Icon } from './Icon';
 
@@ -35,6 +43,21 @@ export type CarouselSlotItem = {
   family?: string;
   dateSpan?: string;
   growthDays?: string;
+  sowingDate?: string;
+  harvestDate?: string;
+  rawSowingDate?: string;
+  rawHarvestDate?: string;
+  safeExpiryDate?: string;
+  hardExpiryDate?: string;
+  rawSafeExpiryDate?: string;
+  rawHardExpiryDate?: string;
+  daysUntilSafeExpiry?: number;
+  daysUntilHardExpiry?: number;
+  delaySlackDays?: number;
+  turnaroundBufferDays?: number;
+  collisionProbabilityPct?: number;
+  growthCycleDays?: { minimum: number; nominal: number; maximum: number };
+  uncertaintyCone?: SlotUncertaintyCone;
 };
 
 export type AlternativePlanItem = {
@@ -46,11 +69,28 @@ export type AlternativePlanItem = {
   period: string;
   title: string;
   badge: string;
-  slots: { cropId: string; cropName: string }[];
+  slots: {
+    cropId: string;
+    cropName: string;
+    daysUntilSafeExpiry?: number;
+    daysUntilHardExpiry?: number;
+    collisionProbabilityPct?: number;
+  }[];
   isBest?: boolean;
   cropCount?: number;
   totalDays?: number;
   isCustom?: boolean;
+  safeExpiryDate?: string;
+  hardExpiryDate?: string;
+  daysUntilSafeExpiry?: number;
+  daysUntilHardExpiry?: number;
+  collisionProbabilityPct?: number;
+  turnaroundExpiryPressure?: number;
+  turnaroundSummary?: {
+    bufferDays: number;
+    status: string;
+    advisory: string;
+  };
   filterScores?: Record<RotationFilterOptionId, number>;
   filterBadges?: Record<RotationFilterOptionId, string>;
   customComparison?: { gapPts: number; reason: string };
@@ -64,17 +104,53 @@ export type AlternativePlanItem = {
   };
 };
 
+const DEFAULT_THRESHOLDS: ExpiryThresholds = {
+  expirySafetyDays: 7,
+  collisionThresholdPct: 25,
+  weatherVolatility: 0.18,
+};
+
 const CARD_WIDTH = 104;
-const CARD_HEIGHT = 104;
-const TRACK_HEIGHT = 136;
+const CARD_HEIGHT = 116;
+const TRACK_HEIGHT = 148;
 const ARROW_WIDTH = 22;
 const ARROW_HEIGHT = 14;
 const INITIAL_ANCHOR_X = 14;
 const INITIAL_GAP = 12;
 const INTERACTED_GAP = 24;
 const LIME = '#b8f334';
+const AMBER = '#f5c451';
+const CORAL = '#ff8a7a';
 const SPRING_CONFIG = { damping: 20, stiffness: 180, mass: 0.8 } as const;
 const INITIAL_SCALES = [1.04, 0.94, 0.88, 0.84, 0.80] as const;
+
+function getUrgencyColors(urgency: ExpiryUrgency) {
+  if (urgency === 'critical') {
+    return {
+      dot: CORAL,
+      bg: 'rgba(255, 138, 122, 0.18)',
+      border: 'rgba(255, 138, 122, 0.55)',
+      text: '#ffb4a8',
+      label: 'Critical',
+    };
+  }
+  if (urgency === 'tight') {
+    return {
+      dot: AMBER,
+      bg: 'rgba(245, 196, 81, 0.16)',
+      border: 'rgba(245, 196, 81, 0.48)',
+      text: '#fbd983',
+      label: 'Tight',
+    };
+  }
+  return {
+    dot: LIME,
+    bg: 'rgba(184, 243, 52, 0.14)',
+    border: 'rgba(184, 243, 52, 0.36)',
+    text: '#d8f79a',
+    label: 'Safe',
+  };
+}
 
 function getInitialScale(index: number): number {
   return INITIAL_SCALES[index] ?? Math.max(0.74, 0.80 - (index - 4) * 0.04);
@@ -119,6 +195,8 @@ function AnimatedCarouselCard({
   trackWidth,
   dragX,
   reducedMotion,
+  nextCropName,
+  thresholds,
   onPress,
 }: {
   slot: CarouselSlotItem;
@@ -128,6 +206,8 @@ function AnimatedCarouselCard({
   trackWidth: number;
   dragX: SharedValue<number>;
   reducedMotion: boolean;
+  nextCropName?: string;
+  thresholds: ExpiryThresholds;
   onPress: () => void;
 }) {
   const { targetX, targetScale, targetOpacity } = getCardMetrics(
@@ -165,12 +245,17 @@ function AnimatedCarouselCard({
   const isFocalCard = hasInteracted ? diff === 0 : index === 0;
   const isLeftShrunkCard = hasInteracted && diff < 0;
   const zIndex = hasInteracted ? Math.round(20 - Math.abs(diff) * 4) : 20 - index;
+  const slotEval = useMemo(
+    () => evaluateSlotExpiry(slot, thresholds, nextCropName),
+    [slot, thresholds, nextCropName],
+  );
+  const urgencyColors = getUrgencyColors(slotEval.urgency);
 
   return (
     <Animated.View style={[styles.slotCardPosition, { zIndex }, animatedStyle]}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Focus ${slot.cropName}`}
+        accessibilityLabel={`Focus ${slot.cropName}, ${slotEval.badgeText}`}
         onPress={onPress}
         style={[
           styles.slotCard,
@@ -218,7 +303,7 @@ function AnimatedCarouselCard({
 
         <View style={styles.slotBottomRow}>
           <Text
-            numberOfLines={2}
+            numberOfLines={1}
             style={[
               styles.slotCropName,
               slot.cropName.length > 10 ? styles.slotCropNameCompact : styles.slotCropNameRegular,
@@ -240,6 +325,17 @@ function AnimatedCarouselCard({
           >
             {slot.shortSeason}
           </Text>
+          <View
+            style={[
+              styles.slotExpiryPill,
+              { backgroundColor: urgencyColors.bg, borderColor: urgencyColors.border },
+            ]}
+          >
+            <View style={[styles.slotExpiryDot, { backgroundColor: urgencyColors.dot }]} />
+            <Text style={[styles.slotExpiryText, { color: urgencyColors.text }]} numberOfLines={1}>
+              {slotEval.badgeText}
+            </Text>
+          </View>
         </View>
       </Pressable>
     </Animated.View>
@@ -304,11 +400,30 @@ function AnimatedConnectorArrow({
   );
 }
 
-export function FocusedCropBanner({ slot, totalSlots }: { slot: CarouselSlotItem; totalSlots: number }) {
+export function FocusedCropBanner({
+  slot,
+  totalSlots,
+  nextCropName,
+  thresholds = DEFAULT_THRESHOLDS,
+  onOpenThresholds,
+}: {
+  slot: CarouselSlotItem;
+  totalSlots: number;
+  nextCropName?: string;
+  thresholds?: ExpiryThresholds;
+  onOpenThresholds?: () => void;
+}) {
+  const [explainOpen, setExplainOpen] = useState(false);
   const durationLabel =
     slot.growthDays || slot.fullSeason.split('·')[1]?.trim() || '95 days';
   const windowLabel = slot.dateSpan || slot.shortSeason;
   const benefitLabel = truncateBenefit(slot.soilBenefit || 'Balances soil nutrients');
+  const slotEval = useMemo(
+    () => evaluateSlotExpiry(slot, thresholds, nextCropName),
+    [slot, thresholds, nextCropName],
+  );
+  const urgencyColors = getUrgencyColors(slotEval.urgency);
+  const collisionPct = Math.round(slot.collisionProbabilityPct ?? 0);
 
   return (
     <View style={styles.bannerCard}>
@@ -320,10 +435,15 @@ export function FocusedCropBanner({ slot, totalSlots }: { slot: CarouselSlotItem
           </Text>
         </View>
 
-        <View style={styles.bannerBenefitPill}>
-          <Icon name="sprout" size={12} color={LIME} />
-          <Text style={styles.bannerBenefitText} numberOfLines={1}>
-            {benefitLabel}
+        <View
+          style={[
+            styles.bannerUrgencyPill,
+            { backgroundColor: urgencyColors.bg, borderColor: urgencyColors.border },
+          ]}
+        >
+          <View style={[styles.slotExpiryDot, { backgroundColor: urgencyColors.dot }]} />
+          <Text style={[styles.bannerUrgencyText, { color: urgencyColors.text }]} numberOfLines={1}>
+            {urgencyColors.label} · {slotEval.badgeText}
           </Text>
         </View>
       </View>
@@ -332,6 +452,12 @@ export function FocusedCropBanner({ slot, totalSlots }: { slot: CarouselSlotItem
         <Text style={styles.bannerCropName} numberOfLines={1}>
           {slot.cropName}
         </Text>
+        <View style={styles.bannerBenefitPill}>
+          <Icon name="sprout" size={12} color={LIME} />
+          <Text style={styles.bannerBenefitText} numberOfLines={1}>
+            {benefitLabel}
+          </Text>
+        </View>
         <View style={styles.bannerFamilyPill}>
           <Text style={styles.bannerFamilyText} numberOfLines={1}>
             {slot.family || 'Crop'}
@@ -365,6 +491,131 @@ export function FocusedCropBanner({ slot, totalSlots }: { slot: CarouselSlotItem
           </Text>
         </View>
       </View>
+
+      {/* Expiry & Buffer Strip */}
+      <View style={styles.bannerExpiryStrip}>
+        <View style={styles.bannerMetricCol}>
+          <Text style={styles.bannerMetricLabel}>{strings.safeCutoff.toUpperCase()}</Text>
+          <Text style={styles.bannerMetricValue} numberOfLines={1}>
+            {slot.safeExpiryDate ?? 'Flexible'}
+          </Text>
+          <Text style={[styles.bannerSubValue, { color: urgencyColors.text }]} numberOfLines={1}>
+            {slotEval.safeCountdownLabel}
+          </Text>
+        </View>
+
+        <View style={styles.bannerMetricDivider} />
+
+        <View style={styles.bannerMetricCol}>
+          <Text style={styles.bannerMetricLabel}>{strings.hardCutoff.toUpperCase()}</Text>
+          <Text style={styles.bannerMetricValue} numberOfLines={1}>
+            {slot.hardExpiryDate ?? 'Flexible'}
+          </Text>
+          <Text
+            style={[
+              styles.bannerSubValue,
+              { color: slotEval.urgency === 'critical' ? CORAL : '#b8c8a6' },
+            ]}
+            numberOfLines={1}
+          >
+            {slotEval.hardCountdownLabel}
+          </Text>
+        </View>
+
+        <View style={styles.bannerMetricDivider} />
+
+        <View style={styles.bannerMetricCol}>
+          <Text style={styles.bannerMetricLabel}>COLLISION RISK</Text>
+          <Text
+            style={[
+              styles.bannerMetricValue,
+              { color: collisionPct >= thresholds.collisionThresholdPct ? CORAL : collisionPct > 0 ? AMBER : LIME },
+            ]}
+            numberOfLines={1}
+          >
+            {collisionPct}%
+          </Text>
+          <Text style={styles.bannerSubValue} numberOfLines={1}>
+            {slotEval.slackLabel}
+          </Text>
+        </View>
+      </View>
+
+      {/* Visual Horizontal Timeline Bar: Planned Sow -> Safe Zone -> Caution Buffer -> Hard Cutoff */}
+      <View style={styles.expiryBarBlock}>
+        <Text style={[styles.expiryHeadline, { color: urgencyColors.text }]} numberOfLines={2}>
+          {slotEval.headline}
+        </Text>
+        <View style={styles.expiryBarTrack}>
+          {slotEval.barMetrics.safeZonePct > 0 && (
+            <View
+              style={[
+                styles.expiryBarSegment,
+                { flex: slotEval.barMetrics.safeZonePct, backgroundColor: LIME },
+              ]}
+            />
+          )}
+          {slotEval.barMetrics.cautionZonePct > 0 && (
+            <View
+              style={[
+                styles.expiryBarSegment,
+                { flex: slotEval.barMetrics.cautionZonePct, backgroundColor: AMBER },
+              ]}
+            />
+          )}
+          {slotEval.barMetrics.criticalZonePct > 0 && (
+            <View
+              style={[
+                styles.expiryBarSegment,
+                { flex: slotEval.barMetrics.criticalZonePct, backgroundColor: CORAL },
+              ]}
+            />
+          )}
+        </View>
+        <View style={styles.expiryBarLegend}>
+          <Text style={styles.expiryBarTick} numberOfLines={1}>
+            Sow: {slot.sowingDate ?? slot.shortSeason}
+          </Text>
+          <Text style={[styles.expiryBarTick, { color: AMBER }]} numberOfLines={1}>
+            Safe: {slot.safeExpiryDate ?? `${thresholds.expirySafetyDays}d buf`}
+          </Text>
+          <Text style={[styles.expiryBarTick, { color: CORAL }]} numberOfLines={1}>
+            Hard: {slot.hardExpiryDate ?? 'Cutoff'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Collapsible "Why these expiry dates?" explainer drawer */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: explainOpen }}
+        onPress={() => setExplainOpen((prev) => !prev)}
+        style={styles.explainToggleRow}
+      >
+        <View style={styles.explainToggleLeft}>
+          <View style={[styles.slotExpiryDot, { backgroundColor: urgencyColors.dot }]} />
+          <Text style={styles.explainToggleText}>{strings.whyExpiryDates}</Text>
+        </View>
+        <Text style={styles.explainToggleChevron}>{explainOpen ? 'Hide ▲' : 'Explain ▼'}</Text>
+      </Pressable>
+
+      {explainOpen && (
+        <View style={styles.explainDrawer}>
+          <Text style={styles.explainBodyText}>{slotEval.explanation}</Text>
+          <Text style={styles.explainThresholdNote}>{slotEval.thresholdNote}</Text>
+          {onOpenThresholds && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onOpenThresholds}
+              style={styles.explainLinkPill}
+            >
+              <Text style={styles.explainLinkText}>
+                {strings.adjustThresholds} in Account & Farms →
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -373,12 +624,14 @@ export function RotationCarousel({
   slots,
   focusedIndex,
   hasInteracted,
+  thresholds = DEFAULT_THRESHOLDS,
   onFocusSlot,
   onReset,
 }: {
   slots: readonly CarouselSlotItem[];
   focusedIndex: number;
   hasInteracted: boolean;
+  thresholds?: ExpiryThresholds;
   onFocusSlot: (index: number, markInteracted?: boolean) => void;
   onReset: () => void;
 }) {
@@ -494,6 +747,8 @@ export function RotationCarousel({
               trackWidth={trackWidth}
               dragX={dragX}
               reducedMotion={reducedMotion}
+              nextCropName={slots[index + 1]?.cropName}
+              thresholds={thresholds}
               onPress={() => onFocusSlot(index, true)}
             />
           ))}
@@ -877,12 +1132,14 @@ export function AlternativesList({
   rotations,
   selectedId,
   activeFilter,
+  thresholds = DEFAULT_THRESHOLDS,
   onSelect,
   onApplySmartSwap,
 }: {
   rotations: readonly AlternativePlanItem[];
   selectedId?: string;
   activeFilter?: RotationFilterOptionId;
+  thresholds?: ExpiryThresholds;
   onSelect: (id: string) => void;
   onApplySmartSwap?: (replaceCropId: string, withCropId: string) => void;
 }) {
@@ -906,6 +1163,8 @@ export function AlternativesList({
           : `${cropCount} crops`;
         const isPositiveCustom =
           rot.rank === 1 || (rot.customComparison != null && rot.customComparison.gapPts >= 0);
+        const rotEval = evaluateRotationExpiry(rot, thresholds);
+        const urgencyColors = getUrgencyColors(rotEval.urgency);
 
         return (
           <Pressable
@@ -1019,6 +1278,32 @@ export function AlternativesList({
                 </View>
               ))}
             </View>
+
+            <View style={styles.alternativeExpiryRow}>
+              <View
+                style={[
+                  styles.alternativeExpiryPill,
+                  { backgroundColor: urgencyColors.bg, borderColor: urgencyColors.border },
+                ]}
+              >
+                <View style={[styles.slotExpiryDot, { backgroundColor: urgencyColors.dot }]} />
+                <Text style={[styles.alternativeExpiryText, { color: urgencyColors.text }]} numberOfLines={1}>
+                  {rotEval.badgeText}
+                </Text>
+              </View>
+              {rotEval.pressureLabel && (
+                <View style={styles.pressurePill}>
+                  <Text style={styles.pressurePillText} numberOfLines={1}>
+                    {rotEval.pressureLabel}
+                  </Text>
+                </View>
+              )}
+            </View>
+            {rotEval.urgency !== 'safe' && (
+              <Text style={[styles.alternativeAdvisoryText, { color: urgencyColors.text }]} numberOfLines={2}>
+                {rotEval.headline}
+              </Text>
+            )}
 
             {isCustom && rot.customComparison && (
               <View
@@ -1189,10 +1474,133 @@ const styles = StyleSheet.create({
   bannerMetricValueAccent: {
     color: LIME,
   },
+  bannerUrgencyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flexShrink: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  bannerUrgencyText: {
+    fontSize: 11,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  bannerExpiryStrip: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderRadius: 14,
+    backgroundColor: '#18210e',
+    borderWidth: 1,
+    borderColor: '#354424',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+  },
+  bannerSubValue: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#9eb08e',
+  },
+  expiryBarBlock: {
+    gap: 6,
+    paddingTop: 2,
+  },
+  expiryHeadline: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  expiryBarTrack: {
+    flexDirection: 'row',
+    height: 7,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#161f0b',
+    gap: 2,
+  },
+  expiryBarSegment: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  expiryBarLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  expiryBarTick: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#a8b897',
+    flexShrink: 1,
+  },
+  explainToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#1a2310',
+    borderWidth: 1,
+    borderColor: '#334223',
+  },
+  explainToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    flex: 1,
+    minWidth: 0,
+  },
+  explainToggleText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#e5ecd8',
+  },
+  explainToggleChevron: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: LIME,
+  },
+  explainDrawer: {
+    borderRadius: 12,
+    backgroundColor: '#17200d',
+    borderWidth: 1,
+    borderColor: '#364625',
+    padding: 10,
+    gap: 8,
+  },
+  explainBodyText: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: '#dfe8cf',
+  },
+  explainThresholdNote: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#9eb08e',
+  },
+  explainLinkPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(184, 243, 52, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(184, 243, 52, 0.42)',
+  },
+  explainLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: LIME,
+  },
 
   carouselContainer: {
     width: '100%',
-    height: 198,
+    height: 210,
     borderRadius: 22,
     backgroundColor: '#232f17',
     borderColor: '#4c6132',
@@ -1255,9 +1663,9 @@ const styles = StyleSheet.create({
   },
   centerHalo: {
     position: 'absolute',
-    top: (TRACK_HEIGHT - 122) / 2,
+    top: (TRACK_HEIGHT - 134) / 2,
     width: 124,
-    height: 122,
+    height: 134,
     borderRadius: 22,
     backgroundColor: 'rgba(184, 243, 52, 0.12)',
   },
@@ -1383,6 +1791,29 @@ const styles = StyleSheet.create({
   },
   slotSeasonMuted: {
     color: '#8fa07e',
+  },
+  slotExpiryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: '100%',
+  },
+  slotExpiryDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    flexShrink: 0,
+  },
+  slotExpiryText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    flexShrink: 1,
   },
   arrowContainer: {
     position: 'absolute',
@@ -1572,6 +2003,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#7f9369',
+  },
+  alternativeExpiryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  alternativeExpiryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  alternativeExpiryText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  pressurePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#1b2411',
+    borderWidth: 1,
+    borderColor: '#3b4c28',
+  },
+  pressurePillText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#c2d2b0',
+  },
+  alternativeAdvisoryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 15,
   },
 
   filterBarScroll: {

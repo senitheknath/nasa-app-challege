@@ -1,19 +1,158 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { baseUrl, serverStore } from '@/api/config';
 import { ApiError } from '@/api/errors';
 import { Logo } from '@/components/cards';
 import { Chip, ErrorCard, IconButton, Label, Message, PrimaryButton, Segmented, Surface } from '@/components/primitives';
+import { explainThresholdsPreview } from '@/features/plan/expiryExplain';
 import { strings } from '@/i18n/strings';
-import { usePlanner } from '@/state/usePlanner';
-import { colors, radius, size, space } from '@/theme/tokens';
+import { usePlanner, type UncertaintyPreset } from '@/state/usePlanner';
+import { colors, motion, radius, size, space } from '@/theme/tokens';
 import { typography } from '@/theme/typography';
 import { formatNumber } from '@/utils/format';
 import { useAuthMe, useAuthSubmit, useDeleteFarm, useSavedFarms, useSaveFarm, useSignOut } from './hooks';
 import type { SavedFarm } from './model';
+
+type UncertaintyPresetChoice = Exclude<UncertaintyPreset, 'custom'>;
+type ThresholdOption = { value: number; label: string };
+
+const PRESET_CHOICES = [
+  { id: 'conservative', label: strings.presetLabels.conservative },
+  { id: 'balanced', label: strings.presetLabels.balanced },
+  { id: 'flexible', label: strings.presetLabels.flexible },
+] as const;
+
+const PRESET_DESCRIPTIONS: Record<UncertaintyPreset, string> = {
+  conservative: 'Wide 14d buffer, strict 10% risk alerts, and high σ 0.28 weather cone.',
+  balanced: 'Default 7d safety buffer, 25% risk threshold, and σ 0.18 forecast cone.',
+  flexible: 'Tight 3d turnaround, 40% risk threshold, and narrow σ 0.10 weather cone.',
+  custom: 'Custom thresholds active — adjust any control or reset to Balanced.',
+};
+
+const SAFETY_DAY_OPTIONS: readonly ThresholdOption[] = [
+  { value: 3, label: '3d' },
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 21, label: '21d' },
+];
+
+const COLLISION_PCT_OPTIONS: readonly ThresholdOption[] = [
+  { value: 10, label: '10%' },
+  { value: 25, label: '25%' },
+  { value: 40, label: '40%' },
+];
+
+const VOLATILITY_OPTIONS: readonly ThresholdOption[] = [
+  { value: 0.1, label: '0.10 Low' },
+  { value: 0.18, label: '0.18 Standard' },
+  { value: 0.28, label: '0.28 High' },
+];
+
+function clampThreshold(value: number, min: number, max: number, decimals = 0): number {
+  const clamped = Math.min(max, Math.max(min, value));
+  return Number(clamped.toFixed(decimals));
+}
+
+function ThresholdControl({
+  title,
+  valueLabel,
+  value,
+  min,
+  max,
+  step,
+  decimals = 0,
+  options,
+  onChange,
+  decrementLabel,
+  incrementLabel,
+}: {
+  title: string;
+  valueLabel: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  decimals?: number;
+  options: readonly ThresholdOption[];
+  onChange: (next: number) => void;
+  decrementLabel: string;
+  incrementLabel: string;
+}) {
+  const epsilon = decimals > 0 ? 0.005 : 0.5;
+  const atMin = value <= min + (decimals > 0 ? 0.001 : 0);
+  const atMax = value >= max - (decimals > 0 ? 0.001 : 0);
+
+  return (
+    <View style={styles.thresholdGroup}>
+      <View style={styles.thresholdHeader}>
+        <Label variant="caption" tone="sage" style={styles.flex}>{title}</Label>
+        <View style={styles.valueBadge}>
+          <Label variant="smallBold" tone="accent">{valueLabel}</Label>
+        </View>
+      </View>
+
+      <View style={styles.thresholdControlsRow}>
+        <View style={styles.optionChipsWrap}>
+          {options.map((option) => {
+            const active = Math.abs(value - option.value) < epsilon;
+            return (
+              <Pressable
+                key={option.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => onChange(clampThreshold(option.value, min, max, decimals))}
+                style={({ pressed }) => [
+                  styles.optionChip,
+                  active && styles.optionChipActive,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Label variant="chip" tone={active ? 'forest950' : 'cream'}>
+                  {option.label}
+                </Label>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.stepper}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={decrementLabel}
+            accessibilityState={{ disabled: atMin }}
+            disabled={atMin}
+            onPress={() => onChange(clampThreshold(value - step, min, max, decimals))}
+            style={({ pressed }) => [
+              styles.stepBtn,
+              atMin && styles.stepBtnDisabled,
+              pressed && !atMin && styles.pressed,
+            ]}
+          >
+            <Label variant="button" tone="cream">−</Label>
+          </Pressable>
+          <View style={styles.stepDivider} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={incrementLabel}
+            accessibilityState={{ disabled: atMax }}
+            disabled={atMax}
+            onPress={() => onChange(clampThreshold(value + step, min, max, decimals))}
+            style={({ pressed }) => [
+              styles.stepBtn,
+              atMax && styles.stepBtnDisabled,
+              pressed && !atMax && styles.pressed,
+            ]}
+          >
+            <Label variant="button" tone="cream">+</Label>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -122,6 +261,22 @@ export default function AuthScreen() {
   };
 
   const farms = farmsQuery.data?.farms ?? [];
+  const uncertaintyPreset = planner.uncertaintyPreset;
+  const expirySafetyDays = planner.expirySafetyDays;
+  const collisionThresholdPct = planner.collisionThresholdPct;
+  const weatherVolatility = planner.weatherVolatility;
+  const thresholdPreview = explainThresholdsPreview({
+    expirySafetyDays,
+    collisionThresholdPct,
+    weatherVolatility,
+  });
+  const thresholdExplanations = [
+    thresholdPreview.bufferDetail,
+    thresholdPreview.collisionDetail,
+    thresholdPreview.volatilityDetail,
+  ];
+  const hasActivePlan = Boolean(planner.countryId && (planner.reached >= 5 || planner.selectedRotationId));
+  const presetBadgeLabel = strings.presetLabels[uncertaintyPreset];
 
   return (
     <SafeAreaView style={styles.root}>
@@ -299,6 +454,124 @@ export default function AuthScreen() {
             )}
 
             <Surface kind="card" style={styles.formCard}>
+              <View style={styles.thresholdCardHeader}>
+                <View style={styles.flex}>
+                  <Label variant="tag" tone="accent">{strings.uncertaintyPreset}</Label>
+                  <Label variant="title">{strings.expiryThresholdsTitle}</Label>
+                  <Label variant="caption" tone="sage">{strings.expiryThresholdsSubtitle}</Label>
+                </View>
+                <View style={[styles.presetBadge, uncertaintyPreset === 'custom' && styles.presetBadgeCustom]}>
+                  <Label
+                    variant="smallBold"
+                    tone={uncertaintyPreset === 'custom' ? 'accent' : 'cream'}
+                  >
+                    {presetBadgeLabel}
+                  </Label>
+                </View>
+              </View>
+
+              <Segmented
+                items={PRESET_CHOICES}
+                value={uncertaintyPreset}
+                onChange={(id) => planner.setUncertaintyPreset(id as UncertaintyPresetChoice)}
+              />
+
+              <Label variant="caption" tone="sage">
+                {PRESET_DESCRIPTIONS[uncertaintyPreset]}
+              </Label>
+
+              <ThresholdControl
+                title={strings.expirySafetyDaysLabel}
+                valueLabel={`${expirySafetyDays}d`}
+                value={expirySafetyDays}
+                min={0}
+                max={35}
+                step={1}
+                options={SAFETY_DAY_OPTIONS}
+                decrementLabel="Decrease safety buffer margin"
+                incrementLabel="Increase safety buffer margin"
+                onChange={(next) => planner.setExpiryThresholds({ expirySafetyDays: next })}
+              />
+
+              <ThresholdControl
+                title={strings.collisionThresholdLabel}
+                valueLabel={`${collisionThresholdPct}%`}
+                value={collisionThresholdPct}
+                min={5}
+                max={75}
+                step={5}
+                options={COLLISION_PCT_OPTIONS}
+                decrementLabel="Decrease collision risk threshold"
+                incrementLabel="Increase collision risk threshold"
+                onChange={(next) => planner.setExpiryThresholds({ collisionThresholdPct: next })}
+              />
+
+              <ThresholdControl
+                title={strings.weatherVolatilityLabel}
+                valueLabel={`σ ${weatherVolatility.toFixed(2)}`}
+                value={weatherVolatility}
+                min={0.05}
+                max={0.5}
+                step={0.02}
+                decimals={2}
+                options={VOLATILITY_OPTIONS}
+                decrementLabel="Decrease weather volatility"
+                incrementLabel="Increase weather volatility"
+                onChange={(next) => planner.setExpiryThresholds({ weatherVolatility: next })}
+              />
+
+              <Surface kind="highlight" rounding={radius.tile} style={styles.explainedBox}>
+                <Label variant="tag" tone="accent">{`${strings.thresholdsExplainedTitle} · ${thresholdPreview.summary}`}</Label>
+                {thresholdExplanations.map((line) => (
+                  <View key={line} style={styles.explainedRow}>
+                    <View style={styles.explainedDot} />
+                    <Label variant="detail" tone="secondary" style={styles.flex}>
+                      {line}
+                    </Label>
+                  </View>
+                ))}
+              </Surface>
+
+              {uncertaintyPreset !== 'balanced' && (
+                <View style={styles.farmActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => planner.setUncertaintyPreset('balanced')}
+                    style={({ pressed }) => [styles.optionChip, pressed && styles.pressed]}
+                  >
+                    <Label variant="chip" tone="cream">{strings.resetToBalanced}</Label>
+                  </Pressable>
+                </View>
+              )}
+
+              {hasActivePlan && (
+                <View style={styles.activePlanHint}>
+                  <Label variant="caption" tone="sage">
+                    {strings.thresholdsActiveSyncHint}
+                  </Label>
+                  <View style={styles.farmActions}>
+                    {planner.reached >= 5 && (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => router.navigate('/plan')}
+                        style={({ pressed }) => [styles.linkPill, pressed && styles.pressed]}
+                      >
+                        <Label variant="smallBold" tone="accent">Rotation Plan →</Label>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => router.navigate('/monitor')}
+                      style={({ pressed }) => [styles.linkPill, pressed && styles.pressed]}
+                    >
+                      <Label variant="smallBold" tone="accent">Live Monitor →</Label>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+            </Surface>
+
+            <Surface kind="card" style={styles.formCard}>
               <View style={styles.farmsHeader}>
                 <Label variant="title">{strings.serverTitle}</Label>
                 <Label variant="caption" tone="sage">{activeServer}</Label>
@@ -360,5 +633,93 @@ const styles = StyleSheet.create({
   farmList: { gap: space.md },
   farmCard: { padding: space.lg, gap: space.sm },
   farmRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
-  farmActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  farmActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.sm },
+  thresholdCardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: space.md },
+  presetBadge: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.chip,
+    borderWidth: size.hairline,
+    borderColor: colors.border,
+  },
+  presetBadgeCustom: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.accentBorder,
+  },
+  thresholdGroup: { gap: space.xs },
+  thresholdHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  valueBadge: {
+    paddingHorizontal: space.sm + 2,
+    paddingVertical: space.xxs + 1,
+    borderRadius: radius.pill,
+    backgroundColor: colors.highlight,
+    borderWidth: size.hairline,
+    borderColor: colors.accentBorder,
+  },
+  thresholdControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  optionChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, flex: 1, minWidth: 160 },
+  optionChip: {
+    minHeight: 36,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.chip,
+    borderWidth: size.hairline,
+    borderColor: colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  optionChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  pressed: { transform: [{ scale: motion.pressScale }] },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.forest900,
+    borderWidth: size.hairline,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+  },
+  stepBtn: {
+    minWidth: size.touch,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.sm,
+  },
+  stepBtnDisabled: { opacity: motion.disabledOpacity },
+  stepDivider: { width: size.hairline, height: 20, backgroundColor: colors.border },
+  explainedBox: { padding: space.md, gap: space.xs + 2 },
+  explainedRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
+  explainedDot: {
+    width: size.dot - 2,
+    height: size.dot - 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    marginTop: 6,
+  },
+  activePlanHint: {
+    paddingTop: space.sm,
+    borderTopWidth: size.hairline,
+    borderTopColor: colors.border,
+    gap: space.xs + 2,
+  },
+  linkPill: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.highlight,
+    borderWidth: size.hairline,
+    borderColor: colors.accentBorder,
+  },
 });

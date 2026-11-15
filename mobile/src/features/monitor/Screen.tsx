@@ -1,14 +1,21 @@
+import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import Svg, { Line, Polygon, Polyline } from 'react-native-svg';
 import { useOffline, viewState } from '@/api/query';
 import { Feedback } from '@/components/feedback';
 import { Chip, Label, Progress, Segmented, Stat, Surface } from '@/components/primitives';
+import {
+  explainLiveExpiryShift,
+  formatExpiryCountdown,
+  type ExpiryThresholds,
+  type ExpiryUrgency,
+} from '@/features/plan/expiryExplain';
 import { FlowScreen, go, ScreenScroll } from '@/features/planner/FlowScreen';
 import { strings } from '@/i18n/strings';
 import { usePlanner } from '@/state/usePlanner';
-import { colors, radius, space } from '@/theme/tokens';
+import { colors, radius, size, space } from '@/theme/tokens';
 import { formatDate, formatNumber } from '@/utils/format';
+import { tap } from '@/utils/haptics';
 import { useClimateData, useMonitor3D, useSatelliteData } from './hooks';
 import {
   buildGeoBoundary,
@@ -18,9 +25,26 @@ import {
   type MoistureFusionDto,
   type MonitorRequestDto,
   type MonitorSummary,
-  type UncertaintyConePointDto,
+  type Slab3DDto,
 } from './model';
+import { ChlorophyllTerrainMap } from './ChlorophyllTerrainMap';
 import { Slab3DView } from './Slab3DView';
+
+const AMBER = '#F5C451';
+const AMBER_FILL = 'rgba(245, 196, 81, 0.14)';
+const AMBER_BORDER = 'rgba(245, 196, 81, 0.45)';
+
+function monitorUrgencyDot(urgency: ExpiryUrgency): string {
+  if (urgency === 'critical') return colors.danger;
+  if (urgency === 'tight') return AMBER;
+  return colors.accent;
+}
+
+function monitorUrgencyLabel(urgency: ExpiryUrgency): string {
+  if (urgency === 'critical') return 'Critical';
+  if (urgency === 'tight') return 'Tight';
+  return 'Safe';
+}
 
 type TabId = 'slab3d' | 'liveState' | 'rawTelemetry';
 
@@ -453,105 +477,20 @@ function Slab3DTab({ summary, isUpgradingFusion = false }: { summary: MonitorSum
   );
 }
 
-function UncertaintyConeChart({ series, tNowDay }: { series: UncertaintyConePointDto[]; tNowDay: number }) {
-  const [width, setWidth] = useState(320);
-  const height = 170;
-  const padL = 28;
-  const padR = 14;
-  const padT = 14;
-  const padB = 26;
-
-  if (series.length < 2) {
-    return (
-      <Surface kind="card" rounding={radius.tile} style={styles.cardPad}>
-        <Label variant="caption" tone="muted">No uncertainty cone series available for this rotation.</Label>
-      </Surface>
-    );
-  }
-
-  const maxDay = Math.max(1, ...series.map((p) => p.day));
-  const plotW = Math.max(40, width - padL - padR);
-  const plotH = height - padT - padB;
-
-  const toX = (day: number) => padL + (day / maxDay) * plotW;
-  const toY = (pct: number) => padT + (1 - Math.max(0, Math.min(100, pct)) / 100) * plotH;
-
-  const optPoints = series.map((p) => `${toX(p.day).toFixed(1)},${toY(p.optimistic_bound_pct).toFixed(1)}`);
-  const pessReversed = [...series]
-    .reverse()
-    .map((p) => `${toX(p.day).toFixed(1)},${toY(p.pessimistic_bound_pct).toFixed(1)}`);
-  const conePolygon = [...optPoints, ...pessReversed].join(' ');
-  const nominalLine = series
-    .map((p) => `${toX(p.day).toFixed(1)},${toY(p.nominal_progress_pct).toFixed(1)}`)
-    .join(' ');
-  const nowX = toX(Math.min(maxDay, tNowDay));
-
-  return (
-    <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
-      <View style={styles.rowBetween}>
-        <Label variant="tag" tone="sage">GROWTH UNCERTAINTY CONE</Label>
-        <Label variant="caption" tone="accent">Day {tNowDay} / {maxDay}</Label>
-      </View>
-      <View
-        style={styles.chartBox}
-        onLayout={(e) => {
-          if (e.nativeEvent.layout.width > 0) setWidth(e.nativeEvent.layout.width);
-        }}
-      >
-        <Svg width={width} height={height}>
-          {[0, 50, 100].map((pct) => (
-            <Line
-              key={pct}
-              x1={padL}
-              y1={toY(pct)}
-              x2={width - padR}
-              y2={toY(pct)}
-              stroke={colors.grid}
-              strokeWidth={1}
-            />
-          ))}
-          <Line
-            x1={nowX}
-            y1={padT}
-            x2={nowX}
-            y2={height - padB}
-            stroke={colors.cream}
-            strokeOpacity={0.45}
-            strokeDasharray="4 4"
-            strokeWidth={1.2}
-          />
-          <Polygon
-            points={conePolygon}
-            fill={colors.accent}
-            fillOpacity={0.18}
-            stroke={colors.accentBorder}
-            strokeWidth={0.8}
-          />
-          <Polyline
-            points={nominalLine}
-            fill="none"
-            stroke={colors.accent}
-            strokeWidth={2.2}
-          />
-        </Svg>
-      </View>
-      <View style={styles.rowBetween}>
-        <Label variant="caption" tone="muted">Day 0 (0%)</Label>
-        <Label variant="caption" tone="sage">Shaded: Optimistic–Pessimistic</Label>
-        <Label variant="caption" tone="muted">Day {maxDay} (100%)</Label>
-      </View>
-    </Surface>
-  );
-}
-
 function LiveGrowthTab({
+  slab,
   rotations,
   selectedId,
+  thresholds,
   onSelect,
+  onOpenThresholds,
 }: {
+  slab: Slab3DDto;
   rotations: LiveRotationDto[];
   selectedId: string | null;
+  thresholds: ExpiryThresholds;
   onSelect: (id: string) => void;
+  onOpenThresholds: () => void;
 }) {
   if (!rotations.length) {
     return (
@@ -566,7 +505,10 @@ function LiveGrowthTab({
   const active = rotations.find((r) => r.id === selectedId) ?? rotations[0];
   const ls = active.live_state;
   const lag = ls.growth_lag_days;
-  const lagLabel = lag === 0 ? 'On schedule' : lag > 0 ? `+${lag}d ahead` : `${lag}d behind`;
+  const lagLabel = lag === 0 ? 'On schedule' : lag > 0 ? `${lag}d behind` : `${Math.abs(lag)}d ahead`;
+  const shiftEval = explainLiveExpiryShift(ls, thresholds);
+  const safeCountdown = formatExpiryCountdown(ls.days_until_safe_expiry, 'safe');
+  const hardCountdown = formatExpiryCountdown(ls.days_until_hard_expiry, 'hard');
 
   return (
     <View style={styles.sectionStack}>
@@ -595,7 +537,7 @@ function LiveGrowthTab({
         </View>
 
         <View style={styles.statRow}>
-          <Stat tile label="Growth Lag" value={lagLabel} accent={lag >= 0} style={styles.flexOne} />
+          <Stat tile label="Growth Lag" value={lagLabel} accent={lag <= 0} style={styles.flexOne} />
           <Stat tile label="Expected NDVI" value={formatNumber(ls.expected_ndvi, 2)} style={styles.flexOne} />
           <Stat
             tile
@@ -610,13 +552,13 @@ function LiveGrowthTab({
           <Stat
             tile
             label="Safe Expiry"
-            value={ls.safe_expiry_date ? `${formatDate(ls.safe_expiry_date)} (${ls.days_until_safe_expiry ?? 0}d)` : strings.noValue}
+            value={ls.safe_expiry_date ? `${formatDate(ls.safe_expiry_date)} (${safeCountdown})` : strings.noValue}
             style={styles.flexOne}
           />
           <Stat
             tile
             label="Hard Expiry"
-            value={ls.hard_expiry_date ? `${formatDate(ls.hard_expiry_date)} (${ls.days_until_hard_expiry ?? 0}d)` : strings.noValue}
+            value={ls.hard_expiry_date ? `${formatDate(ls.hard_expiry_date)} (${hardCountdown})` : strings.noValue}
             style={styles.flexOne}
           />
         </View>
@@ -627,7 +569,69 @@ function LiveGrowthTab({
         </View>
       </Surface>
 
-      <UncertaintyConeChart series={ls.uncertainty_cone_series} tNowDay={ls.t_now_day} />
+      {/* Live Expiry Shift Explained */}
+      <Surface
+        kind={shiftEval.urgency === 'critical' ? 'danger' : 'card'}
+        rounding={radius.card}
+        style={[
+          styles.cardPad,
+          shiftEval.urgency === 'tight' && styles.shiftBoxTight,
+          shiftEval.urgency === 'safe' && styles.shiftBoxSafe,
+        ]}
+      >
+        <View style={styles.rowBetween}>
+          <View style={styles.shiftTitleRow}>
+            <View style={[styles.shiftDot, { backgroundColor: monitorUrgencyDot(shiftEval.urgency) }]} />
+            <Label variant="tag" tone="sage">{strings.liveExpiryShiftTitle.toUpperCase()}</Label>
+          </View>
+          <View
+            style={[
+              styles.shiftUrgencyPill,
+              shiftEval.urgency === 'critical'
+                ? styles.shiftUrgencyCritical
+                : shiftEval.urgency === 'tight'
+                  ? styles.shiftUrgencyTight
+                  : styles.shiftUrgencySafe,
+            ]}
+          >
+            <Label
+              variant="smallBold"
+              tone={shiftEval.urgency === 'critical' ? 'danger' : shiftEval.urgency === 'safe' ? 'accent' : 'cream'}
+            >
+              {monitorUrgencyLabel(shiftEval.urgency)}
+            </Label>
+          </View>
+        </View>
+
+        <Label variant="button" tone="cream">{shiftEval.headline}</Label>
+
+        <View style={styles.chipRowWrap}>
+          <View style={styles.shiftMetaPill}>
+            <Label variant="label" tone="cream">{shiftEval.lagSummary}</Label>
+          </View>
+          <View style={styles.shiftMetaPill}>
+            <Label variant="label" tone="accent">{shiftEval.volatilitySummary}</Label>
+          </View>
+        </View>
+
+        <Label variant="caption" tone="cream">{shiftEval.explanation}</Label>
+
+        <View style={styles.shiftThresholdFooter}>
+          <Label variant="label" tone="sage" style={styles.flexOne}>
+            Active Account & Farms thresholds: {thresholds.expirySafetyDays}d safety buffer · {thresholds.collisionThresholdPct}% collision alert · σ={thresholds.weatherVolatility.toFixed(2)}
+          </Label>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${strings.adjustThresholds} in Account and Farms`}
+            onPress={onOpenThresholds}
+            style={styles.tuneThresholdBtn}
+          >
+            <Label variant="smallBold" tone="accent">{strings.adjustThresholds} →</Label>
+          </Pressable>
+        </View>
+      </Surface>
+
+      <ChlorophyllTerrainMap slab={slab} liveState={ls} />
     </View>
   );
 }
@@ -798,9 +802,16 @@ export default function MonitorScreen() {
   const tNowDay = usePlanner((s) => s.tNowDay);
   const observedNdvi = usePlanner((s) => s.observedNdvi);
   const weatherVolatility = usePlanner((s) => s.weatherVolatility);
+  const expirySafetyDays = usePlanner((s) => s.expirySafetyDays);
+  const collisionThresholdPct = usePlanner((s) => s.collisionThresholdPct);
   const selectedRotationId = usePlanner((s) => s.selectedRotationId);
   const selectRotation = usePlanner((s) => s.selectRotation);
   const reset = usePlanner((s) => s.reset);
+
+  const thresholds = useMemo<ExpiryThresholds>(
+    () => ({ expirySafetyDays, collisionThresholdPct, weatherVolatility }),
+    [expirySafetyDays, collisionThresholdPct, weatherVolatility],
+  );
 
   const geoBoundary = useMemo(() => buildGeoBoundary(boundary), [boundary]);
 
@@ -855,9 +866,18 @@ export default function MonitorScreen() {
                 {tab === 'slab3d' && <Slab3DTab summary={monitor.data} isUpgradingFusion={monitor.isUpgradingFusion} />}
                 {tab === 'liveState' && (
                   <LiveGrowthTab
+                    slab={monitor.data.slab3d}
                     rotations={monitor.data.liveMonitor.plain_rotations}
                     selectedId={selectedRotationId}
-                    onSelect={(id) => selectRotation(id)}
+                    thresholds={thresholds}
+                    onSelect={(id) => {
+                      tap();
+                      selectRotation(id);
+                    }}
+                    onOpenThresholds={() => {
+                      tap();
+                      router.push('/login');
+                    }}
                   />
                 )}
                 {tab === 'rawTelemetry' && (
@@ -910,7 +930,6 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   flexOne: { flex: 1, minWidth: 92 },
-  chartBox: { width: '100%', height: 170 },
   topGap: { marginTop: space.xs },
   kvList: { gap: space.xs },
   climList: { gap: space.xs },
@@ -936,5 +955,44 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 11,
     lineHeight: 16,
+  },
+  shiftBoxSafe: { borderColor: colors.accentBorder },
+  shiftBoxTight: { backgroundColor: AMBER_FILL, borderColor: AMBER_BORDER },
+  shiftTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  shiftDot: { width: 8, height: 8, borderRadius: 4 },
+  shiftUrgencyPill: {
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xxs + 1,
+    borderRadius: radius.pill,
+    borderWidth: size.hairline,
+  },
+  shiftUrgencySafe: { backgroundColor: colors.highlight, borderColor: colors.accentBorder },
+  shiftUrgencyTight: { backgroundColor: AMBER_FILL, borderColor: AMBER_BORDER },
+  shiftUrgencyCritical: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
+  shiftMetaPill: {
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.innerDark,
+    borderWidth: size.hairline,
+    borderColor: colors.border,
+  },
+  shiftThresholdFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    paddingTop: space.xs,
+    borderTopWidth: size.hairline,
+    borderTopColor: colors.border,
+  },
+  tuneThresholdBtn: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.highlight,
+    borderWidth: size.hairline,
+    borderColor: colors.accentBorder,
   },
 });

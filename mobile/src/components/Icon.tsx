@@ -21,6 +21,7 @@ const paths = {
   cube: 'M12 2 3 7v10l9 5 9-5V7l-9-5ZM3 7l9 5 9-5M12 12v10',
   activity: 'M3 12h4l3-8 4 16 3-8h4',
   plus: 'M12 5v14M5 12h14',
+  bot: 'M7 9h10a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H9l-4 3v-3a3 3 0 0 1-1-2.2V12a3 3 0 0 1 3-3ZM12 9V5M10 13.5h.01M14 13.5h.01',
 } as const;
 
 export type IconName = keyof typeof paths;

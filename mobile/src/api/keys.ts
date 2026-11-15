@@ -24,4 +24,5 @@ export const keys = {
   climate: (context: unknown) => ['climate', context] as const,
   authMe: () => ['auth', 'me'] as const,
   farms: () => ['farms'] as const,
+  crescoStatus: (farmId?: string | number | null) => ['cresco', 'status', farmId ?? 'none'] as const,
 };
