@@ -542,6 +542,36 @@ def _assemble_slab_payload(
         v["downscaled_moisture_pct"] = dm
     parcel_mean_moisture_conserved_pct = round(sum(downscaled_grid) / max(1, len(downscaled_grid)), 2)
 
+    # Spatial satellite Leaf Chlorophyll Content (Cab in ug/cm2) anchored to NDVI and terrain/wetness
+    ndvi_norm = max(0.0, min(1.0, (float(ndvi_current) - 0.12) / 0.76))
+    base_cab = 8.0 + 56.0 * (ndvi_norm ** 1.15)
+    raw_anomalies = [
+        (float(v["s1_s2_wetness_idx"]) - mean_wet_idx) * 16.0
+        - abs(float(v["twi"]) - 7.4) * 0.75
+        - float(v.get("slope_pct", 0.0)) * 0.12
+        for v in verts
+    ]
+    mean_anom = sum(raw_anomalies) / max(1, len(raw_anomalies))
+    chl_vals: list[float] = []
+    for v, anom in zip(verts, raw_anomalies):
+        cab_v = round(max(5.0, min(72.0, base_cab + (anom - mean_anom))), 2)
+        v["chlorophyll_ug_cm2"] = cab_v
+        v["chlorophyll_index"] = round((cab_v - 5.0) / 67.0, 3)
+        chl_vals.append(cab_v)
+
+    has_optical_acq = any(
+        str(a.get("sensor") or "").upper() in ("SENTINEL2_L2A", "LANDSAT_C2_L2", "HLSL30", "MODIS_TERRA_NDVI")
+        for a in overpasses.get("acquisitions", [])
+    )
+    canopy_layer["chlorophyll_mean_ug_cm2"] = round(sum(chl_vals) / max(1, len(chl_vals)), 2)
+    canopy_layer["chlorophyll_min_ug_cm2"] = round(min(chl_vals) if chl_vals else base_cab, 2)
+    canopy_layer["chlorophyll_max_ug_cm2"] = round(max(chl_vals) if chl_vals else base_cab, 2)
+    canopy_layer["chlorophyll_source"] = (
+        "Sentinel-2 / Landsat / MODIS + 30m TWI"
+        if (has_optical_acq and not offline)
+        else "Satellite Canopy Prior + 30m TWI"
+    )
+
     combined_parcel_dt_days = update_frequencies.get("combined_parcel_dt_days")
     if combined_parcel_dt_days is None:
         clear_frac = 1.0 - min(95.0, max(0.0, float(avg_cloud))) / 100.0

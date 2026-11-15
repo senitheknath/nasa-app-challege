@@ -438,7 +438,17 @@ def test_multi_satellite_fusion_mathematical_proofs():
 
     verts = slab["terrain_3d_mesh"]["vertices"]
     assert len(verts) == 25
-    assert all("twi" in v and "s1_s2_wetness_idx" in v and "downscaled_moisture_pct" in v for v in verts)
+    assert all(
+        "twi" in v
+        and "s1_s2_wetness_idx" in v
+        and "downscaled_moisture_pct" in v
+        and "chlorophyll_ug_cm2" in v
+        and "chlorophyll_index" in v
+        for v in verts
+    )
+    canopy = slab["canopy_layer"]
+    assert 5.0 <= canopy["chlorophyll_min_ug_cm2"] <= canopy["chlorophyll_mean_ug_cm2"] <= canopy["chlorophyll_max_ug_cm2"] <= 72.0
+    assert canopy["chlorophyll_source"]
 
 
 
