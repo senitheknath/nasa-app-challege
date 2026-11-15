@@ -382,6 +382,7 @@ def _compute_live_rotation_context(
         "live_rotation_monitor": live_rotation_monitor,
         "active_root_depth_m": active_root_depth_m,
         "ndvi_current": ndvi_current,
+        "ndvi_is_observed": observed_ndvi is not None,
     }
 
 
@@ -394,6 +395,7 @@ def _call_build_3d_field_slab(
     ndvi_current: float,
     stage: str,
     precomputed_autofill: dict[str, Any] | None = None,
+    ndvi_is_observed: bool = False,
 ) -> dict[str, Any]:
     sig_params = inspect.signature(build_3d_field_slab).parameters
     kwargs: dict[str, Any] = {
@@ -408,6 +410,10 @@ def _call_build_3d_field_slab(
         kwargs["stage"] = stage
     if "precomputed_autofill" in sig_params and precomputed_autofill is not None:
         kwargs["precomputed_autofill"] = precomputed_autofill
+    if "ndvi_is_observed" in sig_params:
+        kwargs["ndvi_is_observed"] = ndvi_is_observed
+    if "irrigation" in sig_params:
+        kwargs["irrigation"] = params["irrigation"]
     return build_3d_field_slab(
         params["latitude"],
         params["longitude"],
@@ -441,6 +447,7 @@ async def monitor_3d(request: Request) -> Response:
                 ndvi_current=rot_ctx["ndvi_current"],
                 stage=params["stage"],
                 precomputed_autofill=af_res,
+                ndvi_is_observed=rot_ctx["ndvi_is_observed"],
             )
             return {
                 "location": slab_3d["location"],
@@ -489,6 +496,10 @@ async def monitor_3d_stream(request: Request) -> Response:
                 }
                 if "precomputed_autofill" in sig_params:
                     iter_kwargs["precomputed_autofill"] = af_fast
+                if "ndvi_is_observed" in sig_params:
+                    iter_kwargs["ndvi_is_observed"] = rot_ctx["ndvi_is_observed"]
+                if "irrigation" in sig_params:
+                    iter_kwargs["irrigation"] = params["irrigation"]
                 stage_iter = iter_fn(
                     params["latitude"],
                     params["longitude"],
@@ -505,6 +516,7 @@ async def monitor_3d_stream(request: Request) -> Response:
                         ndvi_current=rot_ctx["ndvi_current"],
                         stage="fast",
                         precomputed_autofill=af_fast,
+                        ndvi_is_observed=rot_ctx["ndvi_is_observed"],
                     )
                     ds_full = _resolve_dataset_for_monitor(
                         params["latitude"],
@@ -523,6 +535,7 @@ async def monitor_3d_stream(request: Request) -> Response:
                         ndvi_current=full_rot["ndvi_current"],
                         stage="full",
                         precomputed_autofill=af_full,
+                        ndvi_is_observed=full_rot["ndvi_is_observed"],
                     )
                 stage_iter = _fallback_iter()
 
