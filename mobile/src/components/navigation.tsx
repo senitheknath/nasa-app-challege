@@ -62,7 +62,7 @@ export function ScreenFooter({ label, current, reached, skipped, disabled, busy,
   return (
     <View style={[styles.footer, { paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
       <LinearGradient pointerEvents="none" colors={[colors.transparent, colors.middleScrim, colors.bottomScrim]} style={StyleSheet.absoluteFill} />
-      <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />
+      {!monitorActive && <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />}
       <View style={styles.footerBar}>
         <View style={styles.stepWrap}>
           <StepBar current={monitorActive ? 0 : current} reached={reached} skipped={skipped} onStep={onStep} />

@@ -51,6 +51,11 @@ export const terrainMeshSchema = z.object({
   regional_slope_pct: z.number(),
   concavity_m: z.number().optional(),
   suggested_drainage_prior: z.string().optional(),
+  runoff_vector: z.object({
+    dx: z.number(),
+    dy: z.number(),
+    gradient_pct: z.number().optional(),
+  }).optional(),
   boundary_uv: z.array(boundaryUvPointSchema).default([]),
   vertices: z.array(terrainVertexSchema),
   dem_tier: z.string().optional(),
@@ -67,6 +72,10 @@ export const soilHorizonSchema = z.object({
   silt_pct: z.number().optional(),
   soc_g_kg: z.number().optional(),
   usda_texture: z.string().optional(),
+  hydraulics: z.object({
+    field_capacity_vol_pct: z.number().optional(),
+    wilting_point_vol_pct: z.number().optional(),
+  }).passthrough().optional(),
   volumetric_moisture_pct: z.number(),
   roots_present: z.boolean(),
 });
@@ -280,6 +289,33 @@ export function mapClimateResponse(dto: ClimateResponseDto) {
     })),
     suggestedWindow: dto.suggested_window,
   };
+}
+
+export type SoilTextureRgb = readonly [number, number, number];
+
+const USDA_SOIL_TEXTURE_RGB: Record<string, SoilTextureRgb> = {
+  clay: [204, 115, 73],
+  'silty clay': [235, 147, 97],
+  'sandy clay': [242, 203, 133],
+  'clay loam': [166, 104, 46],
+  'silty clay loam': [142, 127, 107],
+  'sandy clay loam': [184, 169, 142],
+  loam: [186, 153, 106],
+  'silt loam': [209, 186, 147],
+  'sandy loam': [199, 172, 97],
+  'loamy sand': [244, 206, 113],
+  sand: [246, 220, 136],
+  silt: [188, 181, 125],
+};
+
+export function getSoilTextureRgb(usdaTexture?: string): SoilTextureRgb {
+  const key = (usdaTexture ?? '').trim().toLowerCase();
+  return USDA_SOIL_TEXTURE_RGB[key] ?? [186, 153, 106];
+}
+
+export function getSoilTextureHex(usdaTexture?: string): string {
+  const [r, g, b] = getSoilTextureRgb(usdaTexture);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 export function buildGeoBoundary(
