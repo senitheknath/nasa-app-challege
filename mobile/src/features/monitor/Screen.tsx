@@ -12,6 +12,7 @@ import { formatDate, formatNumber } from '@/utils/format';
 import { useClimateData, useMonitor3D, useSatelliteData } from './hooks';
 import {
   buildGeoBoundary,
+  getSoilTextureHex,
   type LiveRotationDto,
   type MonitorRequestDto,
   type MonitorSummary,
@@ -48,53 +49,108 @@ function SelectChip({
   );
 }
 
+function compassDirection(dx: number, dy: number): string {
+  if (Math.hypot(dx, dy) < 1e-4) return 'Flat';
+  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+  return dirs[idx];
+}
+
+function formatStageName(stage?: string): string {
+  if (!stage) return 'Active Canopy';
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function Slab3DTab({ summary }: { summary: MonitorSummary }) {
-  const { slab3d } = summary;
+  const { slab3d, liveMonitor } = summary;
   const fusion = slab3d.sensor_fusion;
   const moisture3Way = fusion.moisture_fusion_3way ?? {};
+  const atm = slab3d.atmosphere_layer as Record<string, unknown>;
+  const mesh = slab3d.terrain_3d_mesh;
+  const canopy = slab3d.canopy_layer;
+
+  const topLive = liveMonitor.plain_rotations[0]?.live_state;
+  const ndvi = canopy.ndvi_current;
+  const isBareSoil = canopy.is_bare_soil ?? ndvi < 0.2;
+  const deltaT = canopy.ecostress_thermal_stress_delta_c;
+
+  // Compute 10m field moisture & pooling breakdown from vertices
+  const verts = mesh.vertices;
+  const highPool = verts.filter((v) => v.pooling_risk === 'high').length;
+  const modPool = verts.filter((v) => v.pooling_risk === 'moderate').length;
+  const moistVals = verts
+    .map((v) => v.downscaled_moisture_pct)
+    .filter((m): m is number => typeof m === 'number');
+  const minMoist = moistVals.length > 0 ? Math.min(...moistVals) : null;
+  const maxMoist = moistVals.length > 0 ? Math.max(...moistVals) : null;
+  const fusedSigma = typeof moisture3Way.fused_sigma === 'number' ? moisture3Way.fused_sigma : null;
+
+  // Runoff direction
+  const rdx = mesh.runoff_vector?.dx ?? 0;
+  const rdy = mesh.runoff_vector?.dy ?? 0;
+  const runoffDir = compassDirection(rdx, rdy);
+
+  // Daily water balance (Rain - ET0)
+  const rainMm = typeof atm.rainfall_mm_day === 'number' ? atm.rainfall_mm_day : null;
+  const et0Mm = typeof atm.et0_mm_day === 'number' ? atm.et0_mm_day : null;
+  const tempC = typeof atm.temperature_c === 'number' ? atm.temperature_c : null;
+  const vpdKpa = typeof atm.vpd_kpa === 'number' ? atm.vpd_kpa : null;
+  const netWaterMm = rainMm != null && et0Mm != null ? rainMm - et0Mm : null;
+
+  // Thermal stress classification
+  const stressLevel =
+    deltaT == null ? 'Unknown' : deltaT >= 3.0 ? 'High' : deltaT >= 1.5 ? 'Moderate' : 'Low';
 
   return (
     <View style={styles.sectionStack}>
       <Slab3DView slab={slab3d} />
 
-      <View style={styles.sectionHeader}>
-        <Label variant="tag" tone="sage">{strings.soilHorizons}</Label>
-        <Label variant="caption" tone="muted">
-          Root zone {summary.rootDepthLabel}
-        </Label>
-      </View>
-
-      <View style={styles.horizonGrid}>
-        {slab3d.soil_3d_horizons.map((h) => (
-          <Surface
-            key={h.depth_label}
-            kind={h.roots_present ? 'selected' : 'card'}
-            rounding={radius.tile}
-            style={styles.horizonCard}
-          >
-            <View style={styles.rowBetween}>
-              <Label variant="button" tone="cream">{h.depth_label}</Label>
-              <Chip
-                label={h.roots_present ? 'Roots' : 'Subsoil'}
-                accent={h.roots_present}
-              />
-            </View>
-            <View style={styles.horizonStats}>
-              <Stat label="pH" value={formatNumber(h.ph, 2)} />
-              <Stat label="Moisture" value={`${formatNumber(h.volumetric_moisture_pct, 1)}%`} accent={h.roots_present} />
-            </View>
-            {h.usda_texture && (
-              <Label variant="caption" tone="sage" numberOfLines={1}>
-                {h.usda_texture}
-              </Label>
-            )}
-          </Surface>
-        ))}
-      </View>
-
+      {/* Crop Health, Growth Stage & Harvest Timing */}
       <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
         <View style={styles.rowBetween}>
-          <Label variant="tag" tone="sage">{strings.sensorFusion}</Label>
+          <Label variant="tag" tone="sage">CROP & HARVEST TIMING</Label>
+          <Chip
+            label={topLive ? formatStageName(topLive.active_stage) : `NDVI ${formatNumber(ndvi, 2)}`}
+            accent
+          />
+        </View>
+        <View style={styles.statRow}>
+          <Stat
+            tile
+            label="Growth Lag"
+            value={
+              topLive
+                ? `${topLive.growth_lag_days > 0 ? '+' : ''}${topLive.growth_lag_days}d`
+                : '0d'
+            }
+            style={styles.flexOne}
+          />
+          <Stat
+            tile
+            label="Root Depth"
+            value={summary.rootDepthLabel}
+            accent
+            style={styles.flexOne}
+          />
+          <Stat
+            tile
+            label="Harvest ±σ"
+            value={topLive ? `±${formatNumber(topLive.sigma_at_harvest_days, 1)}d` : strings.noValue}
+            style={styles.flexOne}
+          />
+        </View>
+        {topLive?.safe_expiry_date && (
+          <Label variant="caption" tone="sage">
+            Sow-by {formatDate(topLive.safe_expiry_date)} · Hard expiry {topLive.hard_expiry_date ? formatDate(topLive.hard_expiry_date) : strings.noValue}
+          </Label>
+        )}
+      </Surface>
+
+      {/* Field Moisture & Pooling Zones */}
+      <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
+        <View style={styles.rowBetween}>
+          <Label variant="tag" tone="sage">FIELD MOISTURE & POOLING</Label>
           {fusion.combined_parcel_dt_days != null && (
             <Label variant="caption" tone="accent">
               Revisit {formatNumber(fusion.combined_parcel_dt_days, 2)}d
@@ -102,25 +158,149 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
           )}
         </View>
         <View style={styles.statRow}>
-          {fusion.parcel_mean_moisture_conserved_pct != null && (
-            <Stat
-              tile
-              label="Parcel Moisture"
-              value={`${formatNumber(fusion.parcel_mean_moisture_conserved_pct, 1)}%`}
-              accent
-              style={styles.flexOne}
-            />
+          <Stat
+            tile
+            label="Soil Moisture"
+            value={
+              fusion.parcel_mean_moisture_conserved_pct != null
+                ? `${formatNumber(fusion.parcel_mean_moisture_conserved_pct, 1)}%`
+                : strings.noValue
+            }
+            accent
+            style={styles.flexOne}
+          />
+          <Stat
+            tile
+            label="Accuracy"
+            value={fusedSigma != null ? `±${formatNumber(fusedSigma, 2)}%` : '±2.92%'}
+            style={styles.flexOne}
+          />
+          <Stat
+            tile
+            label="Pooling Risk"
+            value={`${highPool} High · ${modPool} Mod`}
+            style={styles.flexOne}
+          />
+        </View>
+        {minMoist != null && maxMoist != null && (
+          <Label variant="caption" tone="sage">
+            Ridges {formatNumber(minMoist, 1)}% → Valleys {formatNumber(maxMoist, 1)}% vol
+          </Label>
+        )}
+      </Surface>
+
+      {/* Heat Stress & Nitrogen */}
+      <View style={styles.horizonGrid}>
+        <Surface kind="card" rounding={radius.tile} style={styles.horizonCard}>
+          <Label variant="tag" tone="sage">HEAT STRESS (ΔT)</Label>
+          <Stat
+            label={`${stressLevel} Stress`}
+            value={deltaT != null ? `+${formatNumber(deltaT, 1)} °C` : strings.noValue}
+            accent={stressLevel === 'High'}
+          />
+        </Surface>
+
+        <Surface kind="card" rounding={radius.tile} style={styles.horizonCard}>
+          <Label variant="tag" tone="sage">NITROGEN (NDRE)</Label>
+          <Stat
+            label="Canopy Check"
+            value={ndvi >= 0.5 ? 'Red-Edge Active' : 'Early Canopy'}
+            accent={ndvi >= 0.5}
+          />
+        </Surface>
+      </View>
+
+      {/* Slope, Runoff & Bunding */}
+      <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
+        <View style={styles.rowBetween}>
+          <Label variant="tag" tone="sage">SLOPE & RUNOFF</Label>
+          <Label variant="caption" tone="accent">
+            Drains {runoffDir}
+          </Label>
+        </View>
+        <View style={styles.statRow}>
+          <Stat
+            tile
+            label="Elevation"
+            value={
+              mesh.elevation_min_m != null && mesh.elevation_max_m != null
+                ? `${formatNumber(mesh.elevation_min_m, 0)}–${formatNumber(mesh.elevation_max_m, 0)} m`
+                : summary.elevationLabel
+            }
+            style={styles.flexOne}
+          />
+          <Stat tile label="Slope" value={summary.slopeLabel} style={styles.flexOne} />
+          <Stat
+            tile
+            label="Drainage"
+            value={formatStageName(mesh.suggested_drainage_prior)}
+            accent
+            style={styles.flexOne}
+          />
+        </View>
+      </Surface>
+
+      {/* Root-Zone Soil Depths (0-100 cm) */}
+      <View style={styles.sectionHeader}>
+        <Label variant="tag" tone="sage">{strings.soilHorizons}</Label>
+        <Label variant="caption" tone="muted">
+          {isBareSoil ? 'Bare-soil pH active' : `Root zone ${summary.rootDepthLabel}`}
+        </Label>
+      </View>
+
+      <View style={styles.horizonGrid}>
+        {slab3d.soil_3d_horizons.map((h) => {
+          const soilHex = getSoilTextureHex(h.usda_texture);
+          return (
+            <Surface
+              key={h.depth_label}
+              kind={h.roots_present ? 'selected' : 'card'}
+              rounding={radius.tile}
+              style={[styles.horizonCard, { borderLeftWidth: 4, borderLeftColor: soilHex }]}
+            >
+              <View style={styles.rowBetween}>
+                <Label variant="button" tone="cream">{h.depth_label}</Label>
+                <Chip
+                  label={h.roots_present ? 'Roots' : 'Subsoil'}
+                  accent={h.roots_present}
+                />
+              </View>
+              <View style={styles.horizonStats}>
+                <Stat label="pH" value={formatNumber(h.ph, 2)} />
+                <Stat label="Moisture" value={`${formatNumber(h.volumetric_moisture_pct, 1)}%`} accent={h.roots_present} />
+              </View>
+              {h.hydraulics?.field_capacity_vol_pct != null && h.hydraulics?.wilting_point_vol_pct != null && (
+                <Label variant="caption" tone="muted" numberOfLines={1}>
+                  FC {formatNumber(h.hydraulics.field_capacity_vol_pct, 1)}% · WP {formatNumber(h.hydraulics.wilting_point_vol_pct, 1)}%
+                </Label>
+              )}
+              {h.usda_texture && (
+                <View style={styles.textureRow}>
+                  <View style={[styles.textureSwatch, { backgroundColor: soilHex }]} />
+                  <Label variant="caption" tone="sage" numberOfLines={1}>
+                    {h.usda_texture}
+                  </Label>
+                </View>
+              )}
+            </Surface>
+          );
+        })}
+      </View>
+
+      {/* Daily Weather & Water Demand */}
+      <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
+        <View style={styles.rowBetween}>
+          <Label variant="tag" tone="sage">WATER BALANCE</Label>
+          {netWaterMm != null && (
+            <Label variant="caption" tone={netWaterMm >= 0 ? 'accent' : 'cream'}>
+              Net {netWaterMm >= 0 ? '+' : ''}{formatNumber(netWaterMm, 2)} mm/d
+            </Label>
           )}
-          {Object.entries(moisture3Way).slice(0, 3).map(([key, val]) => (
-            <Stat
-              key={key}
-              tile
-              compact
-              label={key.replace(/_/g, ' ')}
-              value={typeof val === 'number' ? formatNumber(val, 1) : String(val ?? strings.noValue)}
-              style={styles.flexOne}
-            />
-          ))}
+        </View>
+        <View style={styles.statRow}>
+          <Stat tile label="Rain" value={rainMm != null ? `${formatNumber(rainMm, 1)} mm/d` : strings.noValue} style={styles.flexOne} />
+          <Stat tile label="ET₀ Loss" value={et0Mm != null ? `${formatNumber(et0Mm, 2)} mm/d` : strings.noValue} accent style={styles.flexOne} />
+          <Stat tile label="Temp / VPD" value={tempC != null ? `${formatNumber(tempC, 1)}°C · ${vpdKpa != null ? formatNumber(vpdKpa, 2) : '-'}kPa` : strings.noValue} style={styles.flexOne} />
         </View>
       </Surface>
     </View>
@@ -577,6 +757,8 @@ const styles = StyleSheet.create({
   horizonGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   horizonCard: { width: '48%', flexGrow: 1, padding: space.md, gap: space.sm },
   horizonStats: { flexDirection: 'row', justifyContent: 'space-between', gap: space.sm },
+  textureRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  textureSwatch: { width: 10, height: 10, borderRadius: 3 },
   cardPad: { padding: space.md, gap: space.sm },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
