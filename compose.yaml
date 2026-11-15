@@ -1,0 +1,47 @@
+name: agroshift-api
+services:
+  agroshift-api:
+    image: python:3.14-slim
+    container_name: agroshift-api
+    restart: unless-stopped
+    ports:
+      - target: 8000
+        published: "8000"
+        protocol: tcp
+    environment:
+      - PORT=8000
+    volumes:
+      - type: bind
+        source: /DATA/AppData/agroshift
+        target: /app
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - |
+        apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+        if [ ! -d /app/.git ]; then
+          git clone --branch main --depth 1 https://github.com/senitheknath/nasa-app-challege.git /app
+        else
+          git -C /app pull --ff-only origin main || true
+        fi
+        pip install --no-cache-dir -r /app/requirements.txt -r /app/requirements-db.txt
+        exec uvicorn api.server:app --host 0.0.0.0 --port $${PORT:-8000}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '8000') + '/api/health', timeout=5)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: agroshift-api
+  title:
+    en_us: AgroShift Backend API
+  tagline:
+    en_us: NASA-powered agricultural planning & Cresco AI API
+  port_map: "8000"
+  index: /api/health
