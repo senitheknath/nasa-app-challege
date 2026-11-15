@@ -1,6 +1,7 @@
-import { useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -8,6 +9,7 @@ import {
   StyleSheet,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Icon } from '@/components/Icon';
 import { Chip, ErrorCard, Label, Surface } from '@/components/primitives';
@@ -69,7 +71,24 @@ export function ChatView({
 }) {
   const [draft, setDraft] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const { width, height } = useWindowDimensions();
+  const compactHeader = keyboardOpen && height < 760;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardOpen(true);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardOpen(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const handleSend = () => {
     const trimmed = draft.trim();
@@ -108,7 +127,8 @@ export function ChatView({
           </View>
         </View>
 
-        <View style={styles.controlsRow}>
+        {!compactHeader && (
+          <View style={[styles.controlsRow, width < 360 && styles.controlsRowWrap]}>
           <Pressable
             accessibilityRole="button"
             disabled={clearing || sending || messages.length === 0}
@@ -139,6 +159,7 @@ export function ChatView({
             </Label>
           </Pressable>
         </View>
+        )}
       </Surface>
 
       {justConnected && messages.length === 0 && (
@@ -157,6 +178,7 @@ export function ChatView({
         contentContainerStyle={styles.messagesContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
       >
         {messages.length === 0 ? (
@@ -259,6 +281,7 @@ export function ChatView({
           maxLength={2000}
           editable={!sending}
           returnKeyType="send"
+          onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100)}
           onSubmitEditing={handleSend}
           accessibilityLabel="Message Cresco AI"
           style={[styles.textInput, Platform.OS === 'web' && webInputStyle]}
@@ -308,6 +331,7 @@ const styles = StyleSheet.create({
     borderColor: colors.accentBorder,
   },
   controlsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  controlsRowWrap: { flexWrap: 'wrap' },
   controlBtn: {
     flexDirection: 'row',
     alignItems: 'center',

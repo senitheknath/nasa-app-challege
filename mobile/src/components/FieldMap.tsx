@@ -256,6 +256,8 @@ export function FieldMap({
   const [panDelta, setPanDelta] = useState({ x: 0, y: 0 });
   const [pinchScale, setPinchScale] = useState(1);
   const panOriginRef = useRef<GeoPoint | null>(null);
+  const isPinchingRef = useRef(false);
+  const pinchScaleRef = useRef(1);
   const lastWheelAtRef = useRef(0);
 
   const effectiveCenter = useMemo<GeoPoint | undefined>(() => {
@@ -276,15 +278,23 @@ export function FieldMap({
   const panGesture = usePanGesture({
     runOnJS: true,
     minDistance: 6,
+    maxPointers: 1,
     onActivate: () => {
+      if (isPinchingRef.current) return;
       if (center) panOriginRef.current = center;
     },
     onUpdate: (event) => {
+      if (isPinchingRef.current) return;
       if (center) {
         setPanDelta({ x: event.translationX, y: event.translationY });
       }
     },
     onDeactivate: (event) => {
+      if (isPinchingRef.current) {
+        setPanDelta({ x: 0, y: 0 });
+        panOriginRef.current = null;
+        return;
+      }
       if (center && panOriginRef.current) {
         const world = latLonToWorld(panOriginRef.current.latitude, panOriginRef.current.longitude, zoom);
         const nextCenter = worldToLatLon(world.x - event.translationX, world.y - event.translationY, zoom);
@@ -313,18 +323,33 @@ export function FieldMap({
 
   const pinchGesture = usePinchGesture({
     runOnJS: true,
+    onActivate: () => {
+      isPinchingRef.current = true;
+      pinchScaleRef.current = 1;
+      setPanDelta({ x: 0, y: 0 });
+      panOriginRef.current = null;
+    },
     onUpdate: (event) => {
       if (!center || !Number.isFinite(event.scale)) return;
-      setPinchScale(Math.max(0.4, Math.min(2.5, event.scale)));
+      const clamped = Math.max(0.4, Math.min(2.5, event.scale));
+      pinchScaleRef.current = clamped;
+      setPinchScale(clamped);
     },
     onDeactivate: (event) => {
-      if (center && Number.isFinite(event.scale) && Math.abs(event.scale - 1) > 0.08) {
-        const deltaZoom = Math.round(Math.log2(event.scale));
+      const scale =
+        Number.isFinite(event.scale) && Math.abs(event.scale - 1) > 0.01
+          ? event.scale
+          : pinchScaleRef.current;
+      if (center && Number.isFinite(scale) && (scale > 1.12 || scale < 0.88)) {
+        const rawDelta = Math.round(Math.log2(scale) * 1.4);
+        const deltaZoom = scale > 1 ? Math.max(1, rawDelta) : Math.min(-1, rawDelta);
         const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + deltaZoom));
         if (nextZoom !== zoom) {
           onCenterChange?.(center.latitude, center.longitude, nextZoom);
         }
       }
+      isPinchingRef.current = false;
+      pinchScaleRef.current = 1;
       setPinchScale(1);
     },
   });
@@ -421,13 +446,11 @@ export function FieldMap({
           {search}
         </View>
         <View style={[styles.mapSpacer, layout.height >= size.roomyCanvas && styles.roomyMapSpacer]} pointerEvents="box-none">
-          {(!points.length || invalidBoundary) && (
+          {invalidBoundary && (
             <View style={styles.hintWrap} pointerEvents="none">
-              <Surface kind={invalidBoundary ? 'danger' : 'glass'} rounding={radius.tile} style={styles.hint}>
+              <Surface kind="danger" rounding={radius.tile} style={styles.hint}>
                 <Label variant="detail" accessibilityLiveRegion="polite">
-                  {invalidBoundary
-                    ? strings.invalidBoundary
-                    : 'Drag to pan · Tap corners to draw parcel'}
+                  {strings.invalidBoundary}
                 </Label>
               </Surface>
             </View>
@@ -435,15 +458,25 @@ export function FieldMap({
           <View style={styles.controls} pointerEvents="box-none">
             {center && (
               <>
-                <IconButton label="Zoom in" name="plus" tone="glass" onPress={() => stepZoom(1)} />
+                <View style={styles.controlBacking}>
+                  <IconButton label="Zoom in" name="plus" tone="dark" onPress={() => stepZoom(1)} />
+                </View>
                 <Pressable accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => stepZoom(-1)} style={styles.zoomOutBtn}>
                   <Label variant="button" tone="cream">−</Label>
                 </Pressable>
               </>
             )}
-            <IconButton label={`Map layer: ${mapStyle}`} name="layers" tone="glass" onPress={cycleMapStyle} />
-            {canClose && <IconButton label={strings.closeBoundary} name="check" tone="dark" color={colors.accent} onPress={onClose} />}
-            <IconButton label={strings.reset} name="trash" color={colors.danger} onPress={onReset} />
+            <View style={styles.controlBacking}>
+              <IconButton label={`Map layer: ${mapStyle}`} name="layers" tone="dark" onPress={cycleMapStyle} />
+            </View>
+            {canClose && (
+              <View style={styles.controlBacking}>
+                <IconButton label={strings.closeBoundary} name="check" tone="dark" color={colors.accent} onPress={onClose} />
+              </View>
+            )}
+            <View style={styles.controlBacking}>
+              <IconButton label={strings.reset} name="trash" tone="dark" color={colors.danger} onPress={onReset} />
+            </View>
           </View>
         </View>
         {metrics}
@@ -483,13 +516,17 @@ const styles = StyleSheet.create({
   mapSpacer: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.md, justifyContent: 'flex-end' },
   roomyMapSpacer: { paddingTop: space.xxl * 2 },
   controls: { gap: space.sm, alignItems: 'center' },
+  controlBacking: {
+    borderRadius: radius.pill,
+    backgroundColor: colors.forest950,
+  },
   zoomOutBtn: {
     width: size.touch,
     height: size.touch,
     borderRadius: radius.pill,
     borderWidth: size.hairline,
     borderColor: colors.border,
-    backgroundColor: colors.iconGlass,
+    backgroundColor: colors.forest950,
     alignItems: 'center',
     justifyContent: 'center',
   },
