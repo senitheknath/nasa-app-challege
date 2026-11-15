@@ -100,6 +100,7 @@ type Planner = Draft & {
   chooseCountry: (countryId: string, center?: { latitude: number; longitude: number; zoom?: number }) => void;
   setCenter: (latitude: number, longitude: number, zoom?: number) => void;
   addPoint: (point: Point) => void;
+  addGeoCorner: (point: Point, geo: GeoPoint) => void;
   close: () => void;
   clearField: () => void;
   setAreaHa: (areaHa: number | null) => void;
@@ -141,13 +142,37 @@ export const usePlanner = create<Planner>()((set) => ({
       boundary: [...state.boundary, geo],
     };
   }),
-  close: () => set((state) => (isValidBoundary(state.points) ? { closed: true } : state)),
+  addGeoCorner: (point, geo) => set((state) => {
+    if (state.closed) return state;
+    return {
+      points: [...state.points, point],
+      boundary: [...state.boundary, geo],
+    };
+  }),
+  close: () => set((state) => {
+    if (!isValidBoundary(state.points)) return state;
+    if (state.boundary.length >= 3) {
+      const lat = state.boundary.reduce((s, p) => s + p.latitude, 0) / state.boundary.length;
+      const lon = state.boundary.reduce((s, p) => s + p.longitude, 0) / state.boundary.length;
+      return {
+        closed: true,
+        latitude: Number(lat.toFixed(6)),
+        longitude: Number(lon.toFixed(6)),
+      };
+    }
+    return { closed: true };
+  }),
   clearField: () => set({ points: [], boundary: [], areaHa: null, closed: false, reached: 2 }),
   setAreaHa: (areaHa) => set({ areaHa }),
   chooseStrategy: (strategyId) => set((state) => {
     const irrigation = strategyId.includes('irrigated') ? 'irrigated' : 'rainfed';
     if (state.strategyId === strategyId && state.irrigation === irrigation) return state;
-    return { strategyId, irrigation, reached: Math.min(state.reached, 3) };
+    return {
+      strategyId,
+      irrigation,
+      cropId: strategyId === 'fallow' ? null : state.cropId,
+      reached: Math.min(state.reached, 3),
+    };
   }),
   setIrrigation: (irrigation) => set({ irrigation }),
   chooseCrop: (cropId) => set((state) => (state.cropId === cropId ? state : { cropId, reached: Math.min(state.reached, 4) })),
@@ -177,7 +202,7 @@ export const usePlanner = create<Planner>()((set) => ({
       areaHa: farm.area_ha ?? null,
       closed: true,
       reached: 6,
-      strategyId: irrigation === 'irrigated' ? 'continuous_irrigated' : 'continuous_rainfed',
+      strategyId: farm.crop_id ? 'standing' : 'fallow',
       irrigation,
       cropId: farm.crop_id ?? state.cropId,
       sowingDate: farm.start_date ?? state.sowingDate,

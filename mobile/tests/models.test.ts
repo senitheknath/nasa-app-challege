@@ -289,3 +289,71 @@ test('keeps date-only values in the user’s local calendar', () => {
   expect(parseCalendarDate('2024-02-29')?.getDate()).toBe(29);
   expect(parseCalendarDate('2026-02-29')).toBeNull();
 });
+
+test('parses rotation plans when backend harvest_window is an object', () => {
+  const harvestWindowObj = {
+    early_maturity: '2025-03-15',
+    nominal_maturity: '2025-03-30',
+    late_maturity: '2025-04-14',
+  };
+  const dto = planSchema.parse({
+    hectares: 12.5,
+    strategyTag: 'Rainfed',
+    mode: 'continuous',
+    crop: {
+      id: 'wheat',
+      name: 'Wheat',
+      category: { id: 'Poaceae', label: 'Poaceae' },
+      yieldTonnesPerHectare: 4.5,
+      waterPercent: 50,
+    },
+    timeline: [
+      {
+        id: 'wheat_then_mung_bean-0',
+        season: '15 Nov – 13 Mar',
+        year: 2024,
+        crop: {
+          id: 'wheat',
+          name: 'Wheat',
+          category: { id: 'Poaceae', label: 'Poaceae' },
+          yieldTonnesPerHectare: 4.5,
+          waterPercent: 50,
+        },
+        note: '2024-11-15 → 2025-03-30',
+        sowingDate: '2024-11-15',
+        harvestDate: '2025-03-30',
+        harvestWindow: harvestWindowObj,
+        kcMax: null,
+      },
+    ],
+    rotations: [
+      {
+        id: 'wheat_then_mung_bean',
+        name: 'Wheat → Mung bean',
+        rank: 1,
+        score: 89.9,
+        rating: 'Excellent',
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'wheat',
+              crop_name: 'Wheat',
+              family: 'Poaceae',
+              sowing_date: '2024-11-15',
+              harvest_nominal_date: '2025-03-30',
+              harvest_window: harvestWindowObj,
+              kc_max: null,
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const plan = mapPlan(dto);
+  expect(plan).not.toBeNull();
+  expect(plan?.rotations).toHaveLength(1);
+  expect(plan?.rotations[0].slots[0].harvestWindow).toContain('–');
+  expect(plan?.timeline[0].harvestWindow).toContain('–');
+});

@@ -12,6 +12,7 @@ export const countrySchema = z.object({
 export const countryDataSchema = z.object({
   defaultCountryId: z.string(),
   currentSeason: z.string(),
+  countryCount: z.number().int().nonnegative().optional(),
   cropCount: z.number().int().nonnegative(),
   seasonCount: z.number().int().nonnegative(),
   defaultStrategyId: z.string().min(1),
@@ -28,20 +29,36 @@ export type Country = { id: string; name: string; supported: boolean; latitude?:
 export type CountryData = {
   defaultCountry: Country | undefined;
   season: string;
+  countriesPlus: string;
   crops: string;
+  cropsPlus: string;
   seasons: string;
   defaultStrategyId: string;
   defaultCropId: string;
   countries: Country[];
 };
 
+export function formatMilestonePlus(count: number): string {
+  const safe = Math.max(0, Math.floor(count));
+  if (safe >= 100) return `${Math.floor(safe / 10) * 10}+`;
+  if (safe >= 10) return `${Math.floor(safe / 5) * 5}+`;
+  return `${safe}+`;
+}
+
 export function mapCountryData(dto: CountryDataDto): CountryData {
   const countries = dto.countries.map(({ id, name, supported, latitude, longitude, zoom }) => ({
     id, name, supported, latitude, longitude, zoom,
   }));
+  const resolvedCountryCount = dto.countryCount ?? countries.filter((country) => country.supported).length;
   return {
     defaultCountry: countries.find((country) => country.id === dto.defaultCountryId),
-    season: dto.currentSeason, crops: formatNumber(dto.cropCount), seasons: formatNumber(dto.seasonCount),
-    defaultStrategyId: dto.defaultStrategyId, defaultCropId: dto.defaultCropId, countries,
+    season: dto.currentSeason,
+    countriesPlus: formatMilestonePlus(resolvedCountryCount),
+    crops: formatNumber(dto.cropCount),
+    cropsPlus: formatMilestonePlus(dto.cropCount),
+    seasons: formatNumber(dto.seasonCount),
+    defaultStrategyId: dto.defaultStrategyId,
+    defaultCropId: dto.defaultCropId,
+    countries,
   };
 }

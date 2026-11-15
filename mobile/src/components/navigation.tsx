@@ -8,7 +8,7 @@ import { IconButton, Label, PrimaryButton, Surface } from './primitives';
 
 const steps = [
   [strings.country, 'globe'], [strings.area, 'map'], [strings.strategy, 'layers'],
-  [strings.crop, 'sprout'], [strings.plan, 'redo'], [strings.monitor, 'cube'],
+  [strings.crop, 'sprout'], [strings.plan, 'redo'],
 ] as const satisfies readonly (readonly [string, IconName])[];
 
 export function StepBar({ current, reached, skipped, onStep }: {
@@ -54,15 +54,39 @@ export function ScreenHeader({ title, subtitle, top, onBack, onCountry, onAccoun
   );
 }
 
-export function ScreenFooter({ label, current, reached, skipped, disabled, busy, onNext, onStep, bottom }: {
+export function ScreenFooter({ label, current, reached, skipped, disabled, busy, onNext, onStep, onMonitor, monitorActive, monitorDisabled, bottom }: {
   label: string; current: number; reached: number; skipped?: number; disabled?: boolean; busy?: boolean;
-  onNext: () => void; onStep: (step: number) => void; bottom: number;
+  onNext: () => void; onStep: (step: number) => void; onMonitor?: () => void; monitorActive?: boolean; monitorDisabled?: boolean; bottom: number;
 }) {
+  const { reducedMotion } = useTheme();
   return (
     <View style={[styles.footer, { paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
       <LinearGradient pointerEvents="none" colors={[colors.transparent, colors.middleScrim, colors.bottomScrim]} style={StyleSheet.absoluteFill} />
       <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />
-      <StepBar current={current} reached={reached} skipped={skipped} onStep={onStep} />
+      <View style={styles.footerBar}>
+        <View style={styles.stepWrap}>
+          <StepBar current={monitorActive ? 0 : current} reached={reached} skipped={skipped} onStep={onStep} />
+        </View>
+        {onMonitor && (
+          <Surface kind="strong" rounding={radius.pill} style={styles.monitorPill}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={strings.monitor}
+              accessibilityState={{ selected: !!monitorActive, disabled: !!monitorDisabled }}
+              disabled={monitorDisabled}
+              onPress={onMonitor}
+              style={({ pressed }) => [
+                styles.tab,
+                !monitorDisabled && styles.available,
+                monitorActive && styles.active,
+                pressed && !reducedMotion && styles.pressed,
+              ]}
+            >
+              <Icon name="cube" color={monitorActive ? colors.accent : monitorDisabled ? colors.locked : colors.cream} />
+            </Pressable>
+          </Surface>
+        )}
+      </View>
     </View>
   );
 }
@@ -72,6 +96,9 @@ const styles = StyleSheet.create({
   headerText: { flex: 1, minWidth: 0 },
   subtitle: { marginTop: space.xs },
   footer: { paddingHorizontal: space.gutter, paddingTop: space.fade, gap: space.md },
+  footerBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  stepWrap: { flex: 1, minWidth: 0 },
+  monitorPill: { padding: space.sm },
   tabBar: { flexDirection: 'row', justifyContent: 'space-between', padding: space.sm },
   tab: { width: size.control, height: size.control, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, borderWidth: size.hairline, borderColor: colors.transparent },
   available: { backgroundColor: colors.reached },

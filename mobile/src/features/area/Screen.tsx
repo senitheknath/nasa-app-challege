@@ -21,10 +21,11 @@ export default function AreaScreen() {
   const country = usePlanner((draft) => draft.countryId);
   const latitude = usePlanner((draft) => draft.latitude);
   const longitude = usePlanner((draft) => draft.longitude);
+  const zoom = usePlanner((draft) => draft.zoom);
   const points = usePlanner((draft) => draft.points);
   const boundary = usePlanner((draft) => draft.boundary);
   const closed = usePlanner((draft) => draft.closed);
-  const { addPoint, close, clearField, setCenter, setAreaHa } = usePlanner.getState();
+  const { addPoint, addGeoCorner, close, clearField, setCenter, setAreaHa } = usePlanner.getState();
   const field = useMemo(
     () => (closed ? { countryId: country, points, latitude, longitude, boundary } : null),
     [boundary, closed, country, latitude, longitude, points],
@@ -43,7 +44,7 @@ export default function AreaScreen() {
 
   useEffect(() => {
     if (map.data && !closed && points.length === 0) {
-      setCenter(map.data.latitude, map.data.longitude, map.data.zoom);
+      setCenter(map.data.latitude, map.data.longitude, Math.max(map.data.zoom, 12));
     }
   }, [closed, map.data, points.length, setCenter]);
 
@@ -58,7 +59,7 @@ export default function AreaScreen() {
     if (match) {
       setPlace(match.name);
       if (match.latitude !== undefined && match.longitude !== undefined) {
-        setCenter(match.latitude, match.longitude, 13);
+        setCenter(match.latitude, match.longitude, 15);
       }
       focus.dismiss();
     }
@@ -76,17 +77,23 @@ export default function AreaScreen() {
     <FlowScreen step={2} action={strings.next} disabled={state !== 'ready' || !closed || measureState !== 'ready'}
       busy={closed && measureState === 'loading'} onNext={() => continueTo(3)}>
       {(inset) => state === 'ready' && map.data ?
-        <FieldMap image={map.data.image} points={points} closed={closed} canClose={canClose} invalidBoundary={!closed && points.length >= 3 && !valid} top={inset.top} bottom={inset.bottom}
+        <FieldMap image={map.data.image} points={points} boundary={boundary} center={{ latitude, longitude }} zoom={zoom}
+          closed={closed} canClose={canClose} invalidBoundary={!closed && points.length >= 3 && !valid} top={inset.top} bottom={inset.bottom}
           onPoint={(point) => {
             if (focus.focused) { focus.dismiss(); return; }
             if (!closed) { tap(); addPoint(point); }
           }}
+          onGeoPoint={(point, geo) => {
+            if (focus.focused) { focus.dismiss(); return; }
+            if (!closed) { tap(); addGeoCorner(point, geo); }
+          }}
+          onCenterChange={(lat, lon, z) => setCenter(lat, lon, z)}
           onClose={() => { tap(); close(); }} onReset={() => { tap(); clearField(); }}
           onRefresh={focus.focused ? focus.dismiss : refresh}
           search={<View {...focus.panelProps}>
-            <SearchField glassy compact accessibilityLabel={strings.place} placeholder={strings.place} value={place}
+            <SearchField glassy compact accessibilityLabel={strings.place} placeholder="Search place, address, or lat, lon" value={place}
               onFocus={focus.open} onPressIn={focus.open} onChangeText={setPlace}
-              returnKeyType="search" submitBehavior="submit" onSubmitEditing={() => { if (results.length === 1) selectPlace(results[0].id); }} />
+              returnKeyType="search" submitBehavior="submit" onSubmitEditing={() => { if (results.length > 0) selectPlace(results[0].id); }} />
             {focus.focused && <View style={styles.results}>
               {placeSettled && places.isError && !results.length ? <Feedback state="error" layout="map" onRetry={() => void places.refetch()} /> :
                 <Suggestions items={results.map((item) => ({ id: item.id, label: item.name, detail: item.detail }))}

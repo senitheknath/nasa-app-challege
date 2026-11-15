@@ -17,29 +17,32 @@ import { useCountryData } from '../country/hooks';
 import { continueTo, FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useCategories, useCrops } from './hooks';
 
-const presets = [() => calendarDate(), () => calendarDate(new Date(), 14), () => calendarDate(new Date(), 30)];
+const presets = [() => calendarDate()];
 
 export default function CropScreen() {
   const country = usePlanner((draft) => draft.countryId);
+  const latitude = usePlanner((draft) => draft.latitude);
+  const longitude = usePlanner((draft) => draft.longitude);
   const selected = usePlanner((draft) => draft.cropId);
   const date = usePlanner((draft) => draft.sowingDate);
   const { chooseCrop, setDate } = usePlanner.getState();
+  const region = { latitude, longitude, sowingDate: date };
   const bootstrap = useCountryData();
-  const categories = useCategories(country);
+  const categories = useCategories(country, region);
   const [choice, setChoice] = useState('');
   const [search, setSearch] = useState('');
   const term = search.trim();
   const settledTerm = useDebouncedValue(term);
   const searching = settledTerm !== term;
-  const query = useCrops(country, settledTerm, choice);
+  const query = useCrops(country, settledTerm, choice, region);
   const offline = useOffline();
   const crops = query.data?.pages.flatMap((page) => page.items) ?? [];
   const state = searching && !offline ? 'loading' : viewState(query, offline, crops.length > 0);
   const categoryState = viewState(categories, offline, categories.data !== undefined);
   const defaultCrop = crops.find((crop) => crop.id === bootstrap.data?.defaultCropId);
-  const fallbackCrop = !term && !choice && !query.hasNextPage ? crops[0] : undefined;
+  const fallbackCrop = crops[0];
   const cropId = selected ?? defaultCrop?.id ?? fallbackCrop?.id;
-  const canGenerate = state === 'ready' && crops.some((crop) => crop.id === cropId);
+  const canGenerate = state === 'ready' && Boolean(cropId);
   const refresh = () => {
     void query.refetch();
     void categories.refetch();
@@ -74,8 +77,11 @@ export default function CropScreen() {
               <SearchField accessibilityLabel={strings.searchCrop} placeholder={strings.searchCrop} value={search} onChangeText={setSearch} />
             </View>}
             renderItem={({ item }) => (
-              <CropCard category={item.category} name={item.name} cropYield={item.cropYield} water={item.water}
-                waterLabel={item.waterLabel} selected={item.id === cropId} onPress={() => { tap(); chooseCrop(item.id); }} />
+              <CropCard category={item.category} family={item.family} name={item.name} scientificName={item.scientificName}
+                botanicalSummary={item.botanicalSummary} coverageValue={item.coverageValue} coverageLabel={item.coverageLabel}
+                cropYield={item.cropYield} growthDays={item.growthDays} suitability={item.suitability} reason={item.reason}
+                water={item.water} waterLabel={item.waterLabel}
+                selected={item.id === cropId} onPress={() => { tap(); chooseCrop(item.id); }} />
             )}
             ListEmptyComponent={<Feedback state={state} layout="crop" emptyTitle={strings.noCrop} emptyHint={strings.noCropHint}
               onRetry={state === 'empty' && (search || choice) ? undefined : refresh} />}

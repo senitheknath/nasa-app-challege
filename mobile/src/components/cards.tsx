@@ -43,8 +43,8 @@ export function Workflow({ items }: { items: readonly { label: string; icon: Ico
   );
 }
 
-export function ChoiceCard({ selected, onPress, tag, title, details, kind = 'strategy' }: {
-  selected: boolean; onPress: () => void; tag: string; title: string; details: ReactNode; kind?: 'strategy' | 'crop';
+export function ChoiceCard({ selected, onPress, tag, tagRight, title, details, kind = 'strategy' }: {
+  selected: boolean; onPress: () => void; tag: string; tagRight?: ReactNode; title: string; details: ReactNode; kind?: 'strategy' | 'crop';
 }) {
   const { reducedMotion } = useTheme();
   return (
@@ -52,7 +52,10 @@ export function ChoiceCard({ selected, onPress, tag, title, details, kind = 'str
       style={({ pressed }) => pressed && !reducedMotion && styles.pressed}>
       <Surface kind={selected ? 'selected' : 'card'} style={[styles.selection, kind === 'strategy' && styles.strategy]}>
         <View style={styles.selectionBody}>
-          <Label variant="tag" tone="sage">{tag}</Label>
+          <View style={styles.tagRow}>
+            <Label variant="tag" tone="sage" style={styles.breakable}>{tag}</Label>
+            {tagRight}
+          </View>
           <Label variant={kind === 'strategy' ? 'strategy' : 'cardTitle'} style={styles.tag}>{title}</Label>
           {details}
         </View>
@@ -71,22 +74,89 @@ export function StrategyCard({ selected, onPress, tag, title, description }: {
     details={<Label variant="detail" tone="sage" style={styles.tag}>{description}</Label>} />;
 }
 
-export function CropCard({ selected, onPress, category, name, cropYield, water, waterLabel }: {
-  selected: boolean; onPress: () => void; category: string; name: string; cropYield: string; water: number; waterLabel: string;
+export function CropCard({
+  selected,
+  onPress,
+  category,
+  family,
+  name,
+  scientificName,
+  coverageValue,
+  coverageLabel,
+  cropYield,
+  growthDays,
+  suitability,
+  reason,
+  water,
+  waterLabel,
+}: {
+  selected: boolean;
+  onPress: () => void;
+  category: string;
+  family?: string;
+  name: string;
+  scientificName?: string;
+  botanicalSummary?: string;
+  coverageValue?: number;
+  coverageLabel?: string;
+  cropYield: string;
+  growthDays?: string;
+  suitability?: string;
+  reason?: string;
+  water: number;
+  waterLabel: string;
 }) {
+  const progressValue = coverageValue ?? water;
+  const metricPrefix = coverageLabel ? strings.modelCoverage : strings.water;
+  const headerTag = family ? `${category} · ${family}` : category;
+  const suitabilityLabel = suitability === 'possible'
+    ? 'Optimal fit'
+    : suitability === 'check'
+      ? 'Climate check'
+      : undefined;
+
   return (
-    <ChoiceCard kind="crop" selected={selected} onPress={onPress} tag={category} title={name} details={
-      <>
-        <View style={styles.cropFacts}>
-          <View style={styles.fact}><Icon name="sprout" size={icons.small} color={colors.sage} /><Label variant="caption" tone="sage">{cropYield}</Label></View>
-          <View style={styles.fact}>
-            <Icon name="drop" size={icons.small} color={colors.sage} />
-            <Label variant="caption" tone="sage">{strings.water} <Label variant="badge" tone={selected ? 'accent' : 'cream'}>{waterLabel}</Label></Label>
-          </View>
+    <ChoiceCard
+      kind="crop"
+      selected={selected}
+      onPress={onPress}
+      tag={headerTag}
+      tagRight={suitabilityLabel ? (
+        <View style={[styles.suitabilityBadge, suitability === 'possible' ? styles.suitabilityOptimal : styles.suitabilityCheck]}>
+          <Label variant="smallBold" tone={suitability === 'possible' ? 'accent' : 'cream'}>
+            {suitabilityLabel}
+          </Label>
         </View>
-        <Progress value={water} label={strings.waterNeed} />
-      </>
-    } />
+      ) : undefined}
+      title={name}
+      details={
+        <>
+          {scientificName ? <Label variant="caption" tone="sage">{scientificName}</Label> : null}
+          <View style={styles.cropFacts}>
+            <View style={styles.fact}>
+              <Icon name="sprout" size={icons.small} color={colors.sage} />
+              <Label variant="caption" tone="sage">{cropYield}</Label>
+            </View>
+            {growthDays ? (
+              <View style={styles.fact}>
+                <Icon name="calendar" size={icons.small} color={colors.sage} />
+                <Label variant="caption" tone="sage">{growthDays}</Label>
+              </View>
+            ) : null}
+            <View style={styles.fact}>
+              <Icon name="drop" size={icons.small} color={colors.sage} />
+              <Label variant="caption" tone="sage">{waterLabel}</Label>
+            </View>
+          </View>
+          {reason ? (
+            <Label variant="caption" tone="sage" numberOfLines={2} style={styles.cropReason}>
+              {reason}
+            </Label>
+          ) : null}
+          <Progress value={progressValue} label={metricPrefix} />
+        </>
+      }
+    />
   );
 }
 
@@ -241,11 +311,16 @@ const styles = StyleSheet.create({
   selection: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md, padding: space.lg },
   strategy: { alignItems: 'center', paddingHorizontal: space.gutter, paddingVertical: space.gutter + space.xxs },
   selectionBody: { flex: 1, minWidth: 0 },
+  tagRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.sm },
+  suitabilityBadge: { paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, borderWidth: size.hairline },
+  suitabilityOptimal: { backgroundColor: colors.highlight, borderColor: colors.accentBorder },
+  suitabilityCheck: { backgroundColor: colors.chip, borderColor: colors.border },
   selectIcon: { width: size.touch, height: size.touch, borderRadius: radius.pill, backgroundColor: colors.chip, justifyContent: 'center', alignItems: 'center' },
   largeSelectIcon: { width: size.control, height: size.control },
   selectedIcon: { backgroundColor: colors.accent },
   pressed: { transform: [{ scale: motion.pressScale }] },
   cropFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.sm, marginBottom: space.md },
+  cropReason: { marginBottom: space.sm },
   fact: { flexDirection: 'row', alignItems: 'center', gap: space.tight, flexShrink: 1 },
   timeline: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
   richTimeline: { padding: space.lg, gap: space.md },
