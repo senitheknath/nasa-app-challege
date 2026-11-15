@@ -31,6 +31,8 @@ _cache = OrderedDict()
 _locks = [threading.Lock() for _ in range(53)]
 _guard = threading.Lock()
 _cooldown = {}
+_session = requests.Session()
+_default_requests_get = requests.get
 
 
 def _delay(value):
@@ -51,7 +53,8 @@ def get(url, params, *, stream=True, timeout=(5, 15)):
             if time.monotonic() < _cooldown.get(host, 0):
                 raise DataError("Provider rate limit. Try again later.")
         try:
-            response = requests.get(url, params=params, timeout=timeout, stream=stream)
+            getter = requests.get if requests.get is not _default_requests_get else _session.get
+            response = getter(url, params=params, timeout=timeout, stream=stream)
             if response.status_code == 429:
                 with _guard:
                     _cooldown[host] = time.monotonic() + max(1, _delay(response.headers.get("Retry-After")))
