@@ -7,14 +7,20 @@ Integrates:
 """
 from __future__ import annotations
 
+import concurrent.futures
 from datetime import date, datetime, timedelta, timezone
 import json
-from typing import Any
+from typing import Any, Callable
 import urllib.parse
 import urllib.request
 
 from agroshift.config import load_platform_config
-from agroshift.earth_data.cache import get_cached, set_cached
+from agroshift.earth_data.cache import (
+    get_cached,
+    get_sensor_cached,
+    set_cached,
+    set_sensor_cached,
+)
 from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
 from agroshift.monitoring.processors import compute_layer_update_frequencies
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
@@ -200,6 +206,65 @@ def _query_stac_collection(
     return items
 
 
+def _query_cmr_sensor(
+    short_name: str,
+    sensor_label: str,
+    sensor_role: str,
+    recurrence: str,
+    bbox_str: str,
+    cmr_polygon: str | None,
+    active_mode: str,
+    limit_per_sensor: int,
+) -> list[dict[str, Any]]:
+    """Query NASA CMR for a single sensor short_name and normalize matching granules."""
+    params: dict[str, str] = {
+        "short_name": short_name,
+        "page_size": str(limit_per_sensor),
+        "sort_key": "-start_date",
+    }
+    if cmr_polygon and active_mode == "full_polygon":
+        params["polygon"] = cmr_polygon
+    else:
+        params["bounding_box"] = bbox_str
+    url = f"{CMR_GRANULES_URL}?{urllib.parse.urlencode(params)}"
+    items: list[dict[str, Any]] = []
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "AgroShift-SatelliteMonitor/1.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        entries = data.get("feed", {}).get("entry", [])
+        for entry in entries:
+            title = entry.get("title", "")
+            start_time = entry.get("time_start", "")
+            cloud_cover = entry.get("cloud_cover")
+            browse_url = next(
+                (
+                    link.get("href")
+                    for link in (entry.get("links") or [])
+                    if isinstance(link, dict)
+                    and "browse" in str(link.get("rel", "")).lower()
+                    and link.get("href")
+                ),
+                None,
+            )
+            items.append(
+                {
+                    "sensor": short_name,
+                    "label": sensor_label,
+                    "role": sensor_role,
+                    "recurrence": recurrence,
+                    "granule_id": title,
+                    "acquired_at": start_time,
+                    "cloud_cover_pct": float(cloud_cover) if cloud_cover is not None else None,
+                    "browse_url": browse_url,
+                    "status": "available",
+                }
+            )
+    except Exception:
+        return []
+    return items
+
+
 def fetch_satellite_overpasses(
     latitude: float,
     longitude: float,
@@ -209,6 +274,7 @@ def fetch_satellite_overpasses(
     area_ha: float | None = None,
     offline: bool = False,
     limit_per_sensor: int = 2,
+    on_sensor_data: Callable[[str, list[dict[str, Any]]], None] | None = None,
 ) -> dict[str, Any]:
     """Query multi-provider STAC (CDSE + Earth-Search) and NASA CMR for Earth observation scenes."""
     geom = resolve_geometry(
@@ -231,6 +297,14 @@ def fetch_satellite_overpasses(
             ]
             avg_cloud = sum(clouds) / len(clouds) if clouds else 22.0
             data["layer_update_frequencies"] = compute_layer_update_frequencies(cloud_cover_pct=avg_cloud)
+        if on_sensor_data is not None:
+            by_sensor: dict[str, list[dict[str, Any]]] = {}
+            for acq in data.get("acquisitions", []):
+                s_id = str(acq.get("sensor") or "")
+                if s_id:
+                    by_sensor.setdefault(s_id, []).append(acq)
+            for s_id, items in by_sensor.items():
+                on_sensor_data(s_id, items)
         return data
 
     stac_sensors = [
@@ -292,66 +366,87 @@ def fetch_satellite_overpasses(
         except ValueError:
             bbox_coords = []
 
+        tasks: list[tuple[str, str, Callable[..., list[dict[str, Any]]], tuple[Any, ...]]] = []
         if len(bbox_coords) == 4:
             for stac_url, coll_id, sensor_id, sensor_label, sensor_role, recurrence in stac_sensors:
-                acquisitions.extend(
-                    _query_stac_collection(
-                        stac_url,
-                        coll_id,
+                tasks.append(
+                    (
                         sensor_id,
-                        sensor_label,
-                        sensor_role,
-                        recurrence,
-                        bbox_coords,
-                        limit_per_sensor,
+                        "stac_api",
+                        _query_stac_collection,
+                        (
+                            stac_url,
+                            coll_id,
+                            sensor_id,
+                            sensor_label,
+                            sensor_role,
+                            recurrence,
+                            bbox_coords,
+                            limit_per_sensor,
+                        ),
                     )
                 )
 
         for short_name, sensor_label, sensor_role, recurrence in sensors:
-            params: dict[str, str] = {
-                "short_name": short_name,
-                "page_size": str(limit_per_sensor),
-                "sort_key": "-start_date",
-            }
-            if cmr_polygon and geom["active_mode"] == "full_polygon":
-                params["polygon"] = cmr_polygon
+            tasks.append(
+                (
+                    short_name,
+                    "nasa_cmr_api",
+                    _query_cmr_sensor,
+                    (
+                        short_name,
+                        sensor_label,
+                        sensor_role,
+                        recurrence,
+                        bbox_str,
+                        cmr_polygon,
+                        geom["active_mode"],
+                        limit_per_sensor,
+                    ),
+                )
+            )
+
+        results_by_idx: dict[int, list[dict[str, Any]]] = {}
+        pending: list[tuple[int, str, str, Callable[..., list[dict[str, Any]]], tuple[Any, ...]]] = []
+
+        for idx, (sensor_id, source_tag, fn, args) in enumerate(tasks):
+            cached_sensor = get_sensor_cached(sensor_id, latitude, longitude)
+            if cached_sensor and isinstance(cached_sensor.get("data"), (list, dict)):
+                raw_data = cached_sensor["data"]
+                items = (
+                    list(raw_data)
+                    if isinstance(raw_data, list)
+                    else list(raw_data.get("acquisitions") or [])
+                )
+                results_by_idx[idx] = items
+                if on_sensor_data is not None:
+                    on_sensor_data(sensor_id, items)
             else:
-                params["bounding_box"] = bbox_str
-            url = f"{CMR_GRANULES_URL}?{urllib.parse.urlencode(params)}"
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "AgroShift-SatelliteMonitor/1.0"})
-                with urllib.request.urlopen(req, timeout=4) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    entries = data.get("feed", {}).get("entry", [])
-                    for entry in entries:
-                        title = entry.get("title", "")
-                        start_time = entry.get("time_start", "")
-                        cloud_cover = entry.get("cloud_cover")
-                        browse_url = next(
-                            (
-                                link.get("href")
-                                for link in (entry.get("links") or [])
-                                if isinstance(link, dict)
-                                and "browse" in str(link.get("rel", "")).lower()
-                                and link.get("href")
-                            ),
-                            None,
-                        )
-                        acquisitions.append(
-                            {
-                                "sensor": short_name,
-                                "label": sensor_label,
-                                "role": sensor_role,
-                                "recurrence": recurrence,
-                                "granule_id": title,
-                                "acquired_at": start_time,
-                                "cloud_cover_pct": float(cloud_cover) if cloud_cover is not None else None,
-                                "browse_url": browse_url,
-                                "status": "available",
-                            }
-                        )
-            except Exception:
-                continue
+                pending.append((idx, sensor_id, source_tag, fn, args))
+
+        if pending:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                future_map: dict[
+                    concurrent.futures.Future[list[dict[str, Any]]],
+                    tuple[int, str, str],
+                ] = {
+                    executor.submit(fn, *args): (idx, sensor_id, source_tag)
+                    for idx, sensor_id, source_tag, fn, args in pending
+                }
+                for fut in concurrent.futures.as_completed(future_map):
+                    idx, sensor_id, source_tag = future_map[fut]
+                    try:
+                        items = fut.result()
+                    except Exception:
+                        items = []
+                    results_by_idx[idx] = items
+                    if items:
+                        set_sensor_cached(sensor_id, latitude, longitude, items, source=source_tag)
+                    if on_sensor_data is not None:
+                        on_sensor_data(sensor_id, items)
+
+        for idx in range(len(tasks)):
+            acquisitions.extend(results_by_idx.get(idx, []))
 
     # Never fabricate synthetic granule IDs or cloud cover if offline or CMR is unreachable
     cmr_status = "verified" if acquisitions else ("offline" if offline else "unavailable")

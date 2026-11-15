@@ -13,7 +13,9 @@ import { useClimateData, useMonitor3D, useSatelliteData } from './hooks';
 import {
   buildGeoBoundary,
   getSoilTextureHex,
+  type ConvergenceStepDto,
   type LiveRotationDto,
+  type MoistureFusionDto,
   type MonitorRequestDto,
   type MonitorSummary,
   type UncertaintyConePointDto,
@@ -62,18 +64,129 @@ function formatStageName(stage?: string): string {
   return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function Slab3DTab({ summary }: { summary: MonitorSummary }) {
-  const { slab3d, liveMonitor } = summary;
+type OverpassAcquisition = {
+  acquisition_date?: string;
+  datetime?: string;
+  mission?: string;
+  sensor?: string;
+};
+
+function formatTimestamp(iso?: string | null): string | null {
+  if (!iso || typeof iso !== 'string') return null;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const datePart = formatDate(iso);
+  if (iso.includes('T')) {
+    const hh = String(parsed.getUTCHours()).padStart(2, '0');
+    const mm = String(parsed.getUTCMinutes()).padStart(2, '0');
+    return `${datePart} ${hh}:${mm}Z`;
+  }
+  return datePart;
+}
+
+function latestOverpassDate(
+  acquisitions?: OverpassAcquisition[] | null,
+  missionMatch?: string,
+): string | null {
+  if (!Array.isArray(acquisitions) || acquisitions.length === 0) return null;
+  const needle = missionMatch?.toLowerCase();
+  const candidates = acquisitions
+    .filter((a) => {
+      if (!needle) return true;
+      const hay = `${a.mission ?? ''} ${a.sensor ?? ''}`.toLowerCase();
+      return hay.includes(needle);
+    })
+    .map((a) => a.acquisition_date ?? a.datetime ?? '')
+    .filter((d) => Boolean(d) && !Number.isNaN(new Date(d).getTime()))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+  return candidates.length > 0 ? formatTimestamp(candidates[0]) : null;
+}
+
+function layerDtLabel(
+  layers: Record<string, { dt_clean_days?: number }> | undefined,
+  key: string,
+): string | null {
+  const dt = layers?.[key]?.dt_clean_days;
+  return typeof dt === 'number' ? `~${formatNumber(dt, 1)}d cadence` : null;
+}
+
+function formatFusionSource(source: string, index: number): string {
+  const key = source.trim().toLowerCase();
+  if (key === 'fao56_smap_prior' || key.includes('smap') || key.includes('prior')) {
+    return 'FAO/SMAP Prior';
+  }
+  if (key === 'sentinel1_sar' || key.includes('sentinel-1') || key.includes('sentinel1')) {
+    return '+Sentinel-1 SAR';
+  }
+  if (key === 'sentinel2_ndmi' || key.includes('sentinel-2') || key.includes('sentinel2')) {
+    return '+Sentinel-2 NDMI';
+  }
+  const clean = source.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return index > 0 && !clean.startsWith('+') ? `+${clean}` : clean;
+}
+
+function formatConvergenceChain(steps: readonly ConvergenceStepDto[]): string {
+  return steps
+    .map((s, idx) => {
+      const decimals = Math.abs(s.fused_sigma * 10 - Math.round(s.fused_sigma * 10)) < 0.01 ? 1 : 2;
+      return `${s.step}. ${formatFusionSource(s.source, idx)} (±${formatNumber(s.fused_sigma, decimals)}%)`;
+    })
+    .join(' → ');
+}
+
+function Slab3DTab({ summary, isUpgradingFusion = false }: { summary: MonitorSummary; isUpgradingFusion?: boolean }) {
+  const { slab3d } = summary;
   const fusion = slab3d.sensor_fusion;
-  const moisture3Way = fusion.moisture_fusion_3way ?? {};
+  const moisture3Way: Partial<MoistureFusionDto> = fusion.moisture_fusion_3way ?? {};
+  const convergenceSteps =
+    fusion.convergence_steps && fusion.convergence_steps.length > 0
+      ? fusion.convergence_steps
+      : (moisture3Way.convergence_steps ?? []);
+  const fusionStage = fusion.fusion_stage ?? moisture3Way.fusion_stage;
   const atm = slab3d.atmosphere_layer as Record<string, unknown>;
   const mesh = slab3d.terrain_3d_mesh;
   const canopy = slab3d.canopy_layer;
+  const freqs = slab3d.update_frequencies as Record<string, unknown>;
+  const overpasses = (canopy.overpasses ?? {}) as {
+    retrieved_at?: string;
+    acquisitions?: OverpassAcquisition[];
+  };
+  const layerFreqs = (freqs.layers ?? {}) as Record<string, { dt_clean_days?: number }>;
 
-  const topLive = liveMonitor.plain_rotations[0]?.live_state;
+  const retrievedLabel =
+    formatTimestamp(overpasses.retrieved_at) ??
+    formatTimestamp(summary.liveMonitor.plain_rotations[0]?.live_state?.current_date);
+  const latestAnyPass = latestOverpassDate(overpasses.acquisitions);
+  const moisturePass =
+    latestOverpassDate(overpasses.acquisitions, 'smap') ??
+    latestOverpassDate(overpasses.acquisitions, 'sentinel-1') ??
+    latestAnyPass ??
+    retrievedLabel;
+  const ecostressPass = latestOverpassDate(overpasses.acquisitions, 'ecostress');
+  const s2Pass =
+    latestOverpassDate(overpasses.acquisitions, 'sentinel-2') ??
+    latestOverpassDate(overpasses.acquisitions, 'hls');
+  const ecostressDt = layerDtLabel(layerFreqs, 'ecostress');
+  const s2Dt = layerDtLabel(layerFreqs, 'hlsl30') ?? layerDtLabel(layerFreqs, 'sentinel2');
+  const atmDate = formatTimestamp(
+    typeof atm.observed_at === 'string'
+      ? atm.observed_at
+      : typeof atm.date === 'string'
+        ? atm.date
+        : overpasses.retrieved_at,
+  );
+
   const ndvi = canopy.ndvi_current;
   const isBareSoil = canopy.is_bare_soil ?? ndvi < 0.2;
   const deltaT = canopy.ecostress_thermal_stress_delta_c;
+  const cloudPct = typeof freqs.cloud_cover_pct === 'number' ? freqs.cloud_cover_pct : null;
+  const areaLabel =
+    slab3d.location.area_ha != null
+      ? `${formatNumber(slab3d.location.area_ha, 1)} ha`
+      : mesh.area_km2 != null
+        ? `${formatNumber(mesh.area_km2, 2)} km²`
+        : strings.noValue;
 
   // Compute 10m field moisture & pooling breakdown from vertices
   const verts = mesh.vertices;
@@ -104,58 +217,59 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
 
   return (
     <View style={styles.sectionStack}>
+      {isUpgradingFusion && (
+        <Surface kind="highlight" rounding={radius.tile} style={styles.cardPad}>
+          <View style={styles.rowBetween}>
+            <Label variant="caption" tone="accent">LIVE PROGRESSIVE FUSION</Label>
+            <Chip label="Stage 0 Prior · Syncing Satellites…" accent />
+          </View>
+        </Surface>
+      )}
+
       <Slab3DView slab={slab3d} />
 
-      {/* Crop Health, Growth Stage & Harvest Timing */}
+      {/* Parcel Footprint & Satellite Revisit */}
       <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
         <View style={styles.rowBetween}>
-          <Label variant="tag" tone="sage">CROP & HARVEST TIMING</Label>
-          <Chip
-            label={topLive ? formatStageName(topLive.active_stage) : `NDVI ${formatNumber(ndvi, 2)}`}
-            accent
-          />
+          <Label variant="tag" tone="sage">PARCEL & SATELLITE CADENCE</Label>
+          <Chip label={`NDVI ${formatNumber(ndvi, 2)}`} accent />
         </View>
+        <Label variant="caption" tone="muted">
+          {retrievedLabel ? `Updated ${retrievedLabel}` : 'Updated Live'}
+        </Label>
         <View style={styles.statRow}>
+          <Stat tile label="Field Area" value={areaLabel} style={styles.flexOne} />
           <Stat
             tile
-            label="Growth Lag"
-            value={
-              topLive
-                ? `${topLive.growth_lag_days > 0 ? '+' : ''}${topLive.growth_lag_days}d`
-                : '0d'
-            }
+            label="Cloud Cover"
+            value={cloudPct != null ? `${formatNumber(cloudPct, 0)}%` : strings.noValue}
             style={styles.flexOne}
           />
           <Stat
             tile
-            label="Root Depth"
-            value={summary.rootDepthLabel}
+            label="Revisit"
+            value={
+              fusion.combined_parcel_dt_days != null
+                ? `${formatNumber(fusion.combined_parcel_dt_days, 2)}d`
+                : strings.noValue
+            }
             accent
             style={styles.flexOne}
           />
-          <Stat
-            tile
-            label="Harvest ±σ"
-            value={topLive ? `±${formatNumber(topLive.sigma_at_harvest_days, 1)}d` : strings.noValue}
-            style={styles.flexOne}
-          />
         </View>
-        {topLive?.safe_expiry_date && (
-          <Label variant="caption" tone="sage">
-            Sow-by {formatDate(topLive.safe_expiry_date)} · Hard expiry {topLive.hard_expiry_date ? formatDate(topLive.hard_expiry_date) : strings.noValue}
-          </Label>
-        )}
       </Surface>
 
       {/* Field Moisture & Pooling Zones */}
       <Surface kind="card" rounding={radius.card} style={styles.cardPad}>
         <View style={styles.rowBetween}>
           <Label variant="tag" tone="sage">FIELD MOISTURE & POOLING</Label>
-          {fusion.combined_parcel_dt_days != null && (
-            <Label variant="caption" tone="accent">
-              Revisit {formatNumber(fusion.combined_parcel_dt_days, 2)}d
-            </Label>
-          )}
+          <Label variant="caption" tone="accent">
+            {moisturePass ? `Pass ${moisturePass}` : ''}
+            {moisturePass && fusion.combined_parcel_dt_days != null ? ' · ' : ''}
+            {fusion.combined_parcel_dt_days != null
+              ? `Revisit ${formatNumber(fusion.combined_parcel_dt_days, 2)}d`
+              : ''}
+          </Label>
         </View>
         <View style={styles.statRow}>
           <Stat
@@ -187,6 +301,26 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
             Ridges {formatNumber(minMoist, 1)}% → Valleys {formatNumber(maxMoist, 1)}% vol
           </Label>
         )}
+        {(convergenceSteps.length > 0 || isUpgradingFusion || fusionStage) && (
+          <Surface kind="strong" rounding={radius.tile} style={styles.fusionBox}>
+            <View style={styles.rowBetween}>
+              <Label variant="caption" tone="sage">FUSION CONVERGENCE</Label>
+              <Chip
+                label={
+                  isUpgradingFusion
+                    ? 'Upgrading to Full Fusion'
+                    : formatStageName(fusionStage ?? 'stage_2_full_fusion')
+                }
+                accent={isUpgradingFusion}
+              />
+            </View>
+            {convergenceSteps.length > 0 && (
+              <Label variant="caption" tone="cream">
+                {formatConvergenceChain(convergenceSteps)}
+              </Label>
+            )}
+          </Surface>
+        )}
       </Surface>
 
       {/* Heat Stress & Nitrogen */}
@@ -198,6 +332,9 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
             value={deltaT != null ? `+${formatNumber(deltaT, 1)} °C` : strings.noValue}
             accent={stressLevel === 'High'}
           />
+          <Label variant="caption" tone="muted" numberOfLines={1}>
+            ECOSTRESS · {ecostressPass ?? ecostressDt ?? 'Cached'}
+          </Label>
         </Surface>
 
         <Surface kind="card" rounding={radius.tile} style={styles.horizonCard}>
@@ -207,6 +344,9 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
             value={ndvi >= 0.5 ? 'Red-Edge Active' : 'Early Canopy'}
             accent={ndvi >= 0.5}
           />
+          <Label variant="caption" tone="muted" numberOfLines={1}>
+            Sentinel-2 · {s2Pass ?? s2Dt ?? 'Cached'}
+          </Label>
         </Surface>
       </View>
 
@@ -218,6 +358,9 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
             Drains {runoffDir}
           </Label>
         </View>
+        <Label variant="caption" tone="muted">
+          GLO-30 DEM · Static terrain
+        </Label>
         <View style={styles.statRow}>
           <Stat
             tile
@@ -244,7 +387,7 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
       <View style={styles.sectionHeader}>
         <Label variant="tag" tone="sage">{strings.soilHorizons}</Label>
         <Label variant="caption" tone="muted">
-          {isBareSoil ? 'Bare-soil pH active' : `Root zone ${summary.rootDepthLabel}`}
+          {isBareSoil ? 'SWIR pH · Active' : `Root zone ${summary.rootDepthLabel}`} · SoilGrids 250m Static
         </Label>
       </View>
 
@@ -297,6 +440,9 @@ function Slab3DTab({ summary }: { summary: MonitorSummary }) {
             </Label>
           )}
         </View>
+        <Label variant="caption" tone="muted">
+          Daily · {atmDate ?? 'Latest synoptic'}
+        </Label>
         <View style={styles.statRow}>
           <Stat tile label="Rain" value={rainMm != null ? `${formatNumber(rainMm, 1)} mm/d` : strings.noValue} style={styles.flexOne} />
           <Stat tile label="ET₀ Loss" value={et0Mm != null ? `${formatNumber(et0Mm, 2)} mm/d` : strings.noValue} accent style={styles.flexOne} />
@@ -706,7 +852,7 @@ export default function MonitorScreen() {
           >
             {monitor.data && (
               <>
-                {tab === 'slab3d' && <Slab3DTab summary={monitor.data} />}
+                {tab === 'slab3d' && <Slab3DTab summary={monitor.data} isUpgradingFusion={monitor.isUpgradingFusion} />}
                 {tab === 'liveState' && (
                   <LiveGrowthTab
                     rotations={monitor.data.liveMonitor.plain_rotations}
@@ -760,6 +906,7 @@ const styles = StyleSheet.create({
   textureRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   textureSwatch: { width: 10, height: 10, borderRadius: 3 },
   cardPad: { padding: space.md, gap: space.sm },
+  fusionBox: { padding: space.sm, gap: space.xs },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   flexOne: { flex: 1, minWidth: 92 },

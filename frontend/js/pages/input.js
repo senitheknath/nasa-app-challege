@@ -461,6 +461,57 @@
     },
 
     /**
+     * Fire-and-forget satellite & soil cache prefetch when user picks a map location or parcel
+     * @param {number} lat
+     * @param {number} lng
+     * @param {Array<{lat:number,lng:number}|{latitude:number,longitude:number}|number[]>} [boundaryCoords]
+     * @param {number|null} [areaHa]
+     */
+    prefetchSatelliteData(lat, lng, boundaryCoords, areaHa) {
+      if (typeof fetch !== 'function') return Promise.resolve();
+      const numLat = Number(lat);
+      const numLng = Number(lng);
+      if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return Promise.resolve();
+
+      let boundary;
+      if (Array.isArray(boundaryCoords) && boundaryCoords.length >= 3) {
+        const ring = boundaryCoords
+          .map(pt => {
+            if (Array.isArray(pt) && pt.length >= 2) return [Number(pt[1]), Number(pt[0])];
+            if (pt && typeof pt === 'object') {
+              const pLat = pt.lat !== undefined ? Number(pt.lat) : Number(pt.latitude);
+              const pLng = pt.lng !== undefined ? Number(pt.lng) : Number(pt.longitude);
+              if (Number.isFinite(pLat) && Number.isFinite(pLng)) return [pLng, pLat];
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (ring.length >= 3) {
+          const first = ring[0];
+          const last = ring[ring.length - 1];
+          if (first[0] !== last[0] || first[1] !== last[1]) {
+            ring.push([first[0], first[1]]);
+          }
+          boundary = { type: 'Polygon', coordinates: [ring] };
+        }
+      }
+
+      const payload = {
+        country: (internalState.territory && internalState.territory.code) || 'LK',
+        latitude: numLat,
+        longitude: numLng,
+        boundary,
+        area_ha: typeof areaHa === 'number' && Number.isFinite(areaHa) ? areaHa : undefined
+      };
+
+      return fetch('/api/earth-data/prefetch', {
+        method: 'POST',
+        headers: backendConfig.headers,
+        body: JSON.stringify(payload)
+      }).catch(() => {});
+    },
+
+    /**
      * Download the structured user input payload as a formatted JSON file
      * @param {string} [filename] 
      */

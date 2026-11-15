@@ -1,20 +1,24 @@
-import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useOffline, viewState } from '@/api/query';
-import { ActionCard, SeasonBadge, TimelineCard } from '@/components/cards';
+import { TimelineCard } from '@/components/cards';
 import { Feedback } from '@/components/feedback';
-import { Backdrop, FieldOverlay } from '@/components/FieldMap';
+import { Icon } from '@/components/Icon';
 import { PlanSheet } from '@/components/PlanSheet';
-import { Chip, Label, Progress, Stat, Surface } from '@/components/primitives';
+import {
+  AlternativesList,
+  FocusedCropBanner,
+  RotationCarousel,
+  type CarouselSlotItem,
+} from '@/components/RotationCarousel';
+import { Label, Stat, Surface } from '@/components/primitives';
 import { strings } from '@/i18n/strings';
 import { usePlanner } from '@/state/usePlanner';
-import { colors, radius, size, space } from '@/theme/tokens';
+import { colors, icons, radius, size, space } from '@/theme/tokens';
 import { formatNumber } from '@/utils/format';
 import { tap } from '@/utils/haptics';
-import { useFieldMap } from '../area/hooks';
 import { useCountryData } from '../country/hooks';
-import { FlowScreen, go, ScrollFrame } from '../planner/FlowScreen';
+import { FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
 import { usePlan } from './hooks';
@@ -23,182 +27,203 @@ import type { Plan, RotationOption } from './model';
 const tabs = [
   { id: 'overview', label: strings.overview },
   { id: 'timeline', label: strings.timeline },
-];
+  { id: 'alternatives', label: 'Alternatives' },
+] as const;
 
-function Overview({ plan, rotation }: { plan: Plan; rotation?: RotationOption }) {
+function compactDays(growthDays?: string): string {
+  if (!growthDays) return '95d';
+  const match = growthDays.match(/\d+d/);
+  return match ? match[0] : growthDays;
+}
+
+function buildFallbackSlots(plan: Plan): CarouselSlotItem[] {
+  return plan.timeline.map((item, index) => ({
+    cropId: item.crop.id,
+    cropName: item.crop.name,
+    order: index + 1,
+    status: index === 0 ? 'Current' : index === 1 ? 'Upcoming' : 'Planned',
+    shortSeason: item.season,
+    fullSeason: item.dateSpan
+      ? `${item.dateSpan}${item.growthDays ? ` · ${compactDays(item.growthDays)}` : ''}`
+      : item.label,
+    actionPrefix: '',
+    actionHighlight: item.crop.name,
+    yieldLabel: item.crop.cropYield,
+    waterPercent: Math.round(item.crop.water * 100),
+    soilBenefit: item.family ? `${item.family} cycle` : 'Balanced soil nutrients',
+    family: item.family ?? item.crop.category,
+    dateSpan: item.dateSpan,
+    growthDays: item.growthDays,
+  }));
+}
+
+function Overview({
+  plan,
+  rotation,
+  slots,
+  focusedIndex,
+  hasInteracted,
+  onFocusSlot,
+  onReset,
+  onOpenAlternatives,
+}: {
+  plan: Plan;
+  rotation?: RotationOption;
+  slots: readonly CarouselSlotItem[];
+  focusedIndex: number;
+  hasInteracted: boolean;
+  onFocusSlot: (index: number, markInteracted?: boolean) => void;
+  onReset: () => void;
+  onOpenAlternatives: () => void;
+}) {
   const { fontScale, width } = useWindowDimensions();
-  const wrap = fontScale > 1.2 || width < 360;
-  const firstSlot = rotation?.slots[0];
-  const secondSlot = rotation?.slots[1];
-  const primaryCropName = firstSlot?.cropName ?? plan.first.crop.name;
-  const startLabel = firstSlot?.sowingDate ?? plan.first.label;
-  const nextCropName = secondSlot?.cropName ?? plan.nextCrop ?? strings.noValue;
-  const cycleCount = rotation ? rotation.slots.length : plan.timeline.length;
+  const wrap = fontScale > 1.15 || width < 440;
+  const focusedSlot = slots[Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)))];
 
-  const stats = [
-    [strings.type, firstSlot?.family ?? plan.crop.category, false],
-    [strings.area, plan.area, false],
-    [rotation ? 'Score' : strings.yield, rotation ? `${formatNumber(rotation.totalAgronomicScore)} pts` : plan.crop.cropYield, true],
-    [strings.seasons, formatNumber(cycleCount), true],
-    [strings.status, rotation?.rating ?? plan.strategy, false],
-    [strings.starts, startLabel, false],
-    [strings.water, plan.crop.waterLabel, true],
-    [strings.nextCrop, nextCropName, false],
+  const isBest = Boolean(rotation?.isBest || rotation?.rank === 1);
+  const rankBadge = isBest
+    ? '★ Best Rotation'
+    : `Alternative #${rotation?.rank ?? 1}`;
+  const sequenceTitle = rotation?.name || slots.map((slot) => slot.cropName).join(' → ');
+
+  const summaryStats = [
+    ['Field Area', plan.area, false],
+    ['Crop Stages', `${slots.length} crops`, true],
+    ['Agronomic Fit', `${formatNumber(rotation?.totalAgronomicScore ?? 0)} pts`, true],
+    ['Turnaround', `${rotation?.turnaroundSummary?.bufferDays ?? 14}d buffer`, false],
   ] as const;
 
   return (
     <>
-      <View style={styles.badgeRow}>
-        <SeasonBadge label={`${plan.mode === 'continuous' ? 'Continuous' : plan.strategy} · ${plan.strategy}`} />
-        {rotation?.collisionProbabilityPct != null && (
-          <View style={[styles.riskPill, rotation.collisionProbabilityPct > 25 && styles.riskPillDanger]}>
-            <Label variant="smallBold" tone={rotation.collisionProbabilityPct > 25 ? 'danger' : 'accent'}>
-              {strings.risk}: {rotation.collisionProbabilityPct}%
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${rankBadge}: ${sequenceTitle}. Tap to compare all rotations`}
+        onPress={onOpenAlternatives}
+      >
+        <Surface kind="highlight" rounding={radius.tile} style={styles.highlightStrip}>
+          <View style={styles.highlightLeft}>
+            <Label variant="smallBold" tone="accent">{rankBadge}</Label>
+            <Label variant="chip" tone="cream" numberOfLines={1}>{sequenceTitle}</Label>
+          </View>
+          <View style={styles.scorePill}>
+            <Label variant="smallBold" tone="forest950">
+              {formatNumber(rotation?.score ?? 0)} pts
             </Label>
           </View>
-        )}
-      </View>
-
-      <ActionCard
-        label={strings.nextStep}
-        prefix={strings.action}
-        action={strings.sow(primaryCropName)}
-        season={firstSlot ? firstSlot.dateSpan : plan.first.label}
-      />
-
-      <View style={styles.grid}>
-        {stats.map(([label, value, accent]) => (
-          <Stat
-            key={label}
-            label={label}
-            value={value}
-            accent={accent}
-            compact={!wrap}
-            style={wrap ? styles.wideStat : styles.smallStat}
-          />
-        ))}
-      </View>
-
-      {!!rotation?.turnaroundSummary && (
-        <Surface kind="card" rounding={radius.tile} style={styles.infoCard}>
-          <View style={styles.infoHeader}>
-            <Label variant="label" tone="sage">{strings.turnaround}</Label>
-            <Label variant="smallBold" tone="accent">
-              {rotation.turnaroundSummary.bufferDays}d · {rotation.turnaroundSummary.status}
-            </Label>
-          </View>
-          <Label variant="caption" tone="cream">{rotation.turnaroundSummary.advisory}</Label>
         </Surface>
+      </Pressable>
+
+      {slots.length > 0 && (
+        <RotationCarousel
+          slots={slots}
+          focusedIndex={focusedIndex}
+          hasInteracted={hasInteracted}
+          onFocusSlot={onFocusSlot}
+          onReset={onReset}
+        />
       )}
 
-      {(rotation?.safeExpiryDate || rotation?.hardExpiryDate) && (
-        <Surface kind="glass" rounding={radius.tile} style={styles.infoCard}>
-          <Label variant="label" tone="sage">{strings.expiry}</Label>
-          <View style={styles.expiryRow}>
-            {rotation.safeExpiryDate && (
-              <View style={styles.expiryItem}>
-                <Label variant="caption" tone="sage">Safe expiry</Label>
-                <Label variant="smallBold" tone="accent">
-                  {rotation.safeExpiryDate}
-                  {rotation.daysUntilSafeExpiry != null ? ` (${rotation.daysUntilSafeExpiry}d)` : ''}
-                </Label>
-              </View>
-            )}
-            {rotation.hardExpiryDate && (
-              <View style={styles.expiryItem}>
-                <Label variant="caption" tone="sage">Hard expiry</Label>
-                <Label variant="smallBold" tone="cream">
-                  {rotation.hardExpiryDate}
-                  {rotation.daysUntilHardExpiry != null ? ` (${rotation.daysUntilHardExpiry}d)` : ''}
-                </Label>
-              </View>
-            )}
-          </View>
-        </Surface>
+      {focusedSlot && (
+        <FocusedCropBanner slot={focusedSlot} totalSlots={slots.length} />
       )}
 
-      <View>
-        <View style={styles.water}>
-          <Label variant="label" tone="sage">{strings.waterNeed}</Label>
-          <Label variant="smallBold" tone="accent">{plan.crop.waterLabel}</Label>
+      <Surface kind="card" rounding={radius.tile} style={styles.statsCard}>
+        <View style={styles.statsGrid}>
+          {summaryStats.map(([label, value, accent]) => (
+            <Stat
+              key={label}
+              label={label}
+              value={value}
+              accent={accent}
+              compact={!wrap}
+              style={wrap ? styles.halfStat : styles.quarterStat}
+            />
+          ))}
         </View>
-        <Progress value={plan.crop.water} label={strings.waterNeed} />
-      </View>
+      </Surface>
     </>
+  );
+}
+
+function TurnaroundConnector({ bufferDays, nextCropName }: { bufferDays: number; nextCropName: string }) {
+  return (
+    <View style={styles.connectorWrap}>
+      <View style={styles.connectorLine} />
+      <View style={styles.connectorPill}>
+        <Icon name="calendar" size={icons.badge} color={colors.accent} />
+        <Label variant="caption" tone="sage" numberOfLines={1} style={styles.connectorText}>
+          {bufferDays}d field prep & turnaround → Next:{' '}
+          <Label variant="smallBold" tone="accent">{nextCropName}</Label>
+        </Label>
+      </View>
+      <View style={styles.connectorLine} />
+    </View>
   );
 }
 
 function RotationTimeline({ plan, rotation }: { plan: Plan; rotation?: RotationOption }) {
   if (!rotation) {
     return (
-      <>
-        {plan.timeline.map((item, index) => (
-          <TimelineCard
-            key={item.id}
-            season={item.label}
-            crop={item.crop.name}
-            summary={item.summary}
-            note={item.note}
-            first={index === 0}
-            dateSpan={item.dateSpan}
-            harvestWindow={item.harvestWindow}
-            family={item.family}
-            growthDays={item.growthDays}
-            stages={item.stages}
-            collisionPct={item.collisionProbabilityPct}
-          />
-        ))}
-      </>
+      <View style={styles.timelineList}>
+        {plan.timeline.map((item, index) => {
+          const nextItem = plan.timeline[index + 1];
+          return (
+            <View key={item.id}>
+              <TimelineCard
+                season={item.label || `Season ${index + 1}`}
+                crop={item.crop.name}
+                summary={`${compactDays(item.growthDays)} · ${item.crop.cropYield}`}
+                note={`Stage ${index + 1}`}
+                first={index === 0}
+                dateSpan={item.dateSpan}
+                harvestWindow={item.harvestWindow}
+                family={item.family ?? item.crop.category}
+                growthDays={item.growthDays}
+                stages={item.stages}
+              />
+              {nextItem && (
+                <TurnaroundConnector
+                  bufferDays={item.turnaroundBufferDays ?? 14}
+                  nextCropName={nextItem.crop.name}
+                />
+              )}
+            </View>
+          );
+        })}
+      </View>
     );
   }
 
   return (
-    <>
+    <View style={styles.timelineList}>
       {rotation.slots.map((slot, index) => {
-        const expiryText = slot.safeExpiryDate
-          ? `Safe: ${slot.safeExpiryDate}${slot.hardExpiryDate ? ` / Hard: ${slot.hardExpiryDate}` : ''}`
-          : undefined;
-        const turnaroundText = slot.turnaroundBufferDays != null
-          ? `${slot.turnaroundBufferDays}d buffer`
-          : undefined;
+        const nextSlot = rotation.slots[index + 1];
+        const bufferDays = slot.turnaroundBufferDays ?? rotation.turnaroundSummary?.bufferDays ?? 14;
 
         return (
-          <View key={`${rotation.id}-${slot.cropId}-${index}`} style={styles.slotGroup}>
+          <View key={`${rotation.id}-${slot.cropId}-${index}`}>
             <TimelineCard
-              season={slot.window || `Cycle ${index + 1}`}
+              season={slot.window || `Season ${index + 1}`}
               crop={slot.cropName}
-              summary={slot.kcMax != null ? `Kc max ${slot.kcMax.toFixed(2)}` : rotation.rating}
-              note={index === 0 ? `#${rotation.rank} Start` : `Cycle ${index + 1}`}
+              summary={`${compactDays(slot.growthDays)} · ${slot.yieldLabel}`}
+              note={`Stage ${index + 1}`}
               first={index === 0}
               dateSpan={slot.dateSpan}
               harvestWindow={slot.harvestWindow}
               family={slot.family}
               growthDays={slot.growthDays}
               stages={slot.stages}
-              turnaround={turnaroundText}
-              expiry={expiryText}
-              collisionPct={slot.collisionProbabilityPct}
             />
-
-            {index === 0 && rotation.slots.length > 1 && rotation.turnaroundSummary && (
-              <Surface kind="highlight" rounding={radius.tile} style={styles.connectorCard}>
-                <View style={styles.infoHeader}>
-                  <Label variant="smallBold" tone="accent">
-                    {strings.turnaround}: {rotation.turnaroundSummary.bufferDays}d ({rotation.turnaroundSummary.status})
-                  </Label>
-                  {rotation.uncertaintyCone?.collisionProbabilityPct != null && (
-                    <Label variant="caption" tone="cream">
-                      {rotation.uncertaintyCone.collisionProbabilityPct}% collision risk
-                    </Label>
-                  )}
-                </View>
-                <Label variant="caption" tone="sage">{rotation.turnaroundSummary.advisory}</Label>
-              </Surface>
+            {nextSlot && (
+              <TurnaroundConnector
+                bufferDays={bufferDays}
+                nextCropName={nextSlot.cropName}
+              />
             )}
           </View>
         );
       })}
-    </>
+    </View>
   );
 }
 
@@ -217,12 +242,10 @@ export default function PlanScreen() {
   const sowingDate = usePlanner((draft) => draft.sowingDate);
   const selectedRotationId = usePlanner((draft) => draft.selectedRotationId);
   const selectRotation = usePlanner((draft) => draft.selectRotation);
-  const reset = usePlanner((draft) => draft.reset);
 
   const bootstrap = useCountryData();
   const strategies = useStrategies(countryId);
   const selected = getSelectedStrategy(strategies.data, strategyId, bootstrap.data?.defaultStrategyId);
-  const map = useFieldMap(countryId);
 
   const draft = useMemo(
     () => (reached >= 5 && countryId && closed && selected
@@ -250,11 +273,13 @@ export default function PlanScreen() {
     isError: query.isError || strategies.isError || bootstrap.isError,
   }, offline, !!query.data);
 
-  const [active, setActive] = useState(tabs[0].id);
+  const [active, setActive] = useState<string>(tabs[0].id);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [hasInteracted, setHasInteracted] = useState(false);
+
   const refresh = () => {
     void strategies.refetch();
     void bootstrap.refetch();
-    void map.refetch();
     if (draft) void query.refetch();
   };
 
@@ -264,46 +289,37 @@ export default function PlanScreen() {
     return plan.rotations.find((rot) => rot.id === selectedRotationId) ?? plan.rotations[0];
   }, [plan, selectedRotationId]);
 
-  const headerActions = (
-    <View style={styles.headerActions}>
-      <View style={styles.actionRow}>
-        <Chip label={strings.openMonitor} accent onPress={() => { tap(); router.push('/monitor'); }} />
-        <Chip label={strings.saveFarm} onPress={() => { tap(); router.push('/login'); }} />
-        <Chip label={strings.restart} onPress={() => { tap(); reset(); go(1); }} />
-      </View>
-      {!!plan && plan.rotations.length > 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rotationStrip}>
-          {plan.rotations.map((rot) => {
-            const isSelected = activeRotation?.id === rot.id;
-            return (
-              <View key={rot.id} style={isSelected ? styles.selectedRotationChip : undefined}>
-                <Chip
-                  label={`#${rot.rank} ${rot.name} (${formatNumber(rot.score)} pts)`}
-                  accent={isSelected}
-                  onPress={() => { tap(); selectRotation(rot.id); }}
-                />
-              </View>
-            );
-          })}
-        </ScrollView>
-      )}
-    </View>
-  );
+  const slots = useMemo<CarouselSlotItem[]>(() => {
+    if (activeRotation?.slots.length) return activeRotation.slots;
+    if (plan) return buildFallbackSlots(plan);
+    return [];
+  }, [activeRotation, plan]);
+
+  const safeFocusedIndex = Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)));
+
+  const ctaAction = active === 'alternatives'
+    ? 'View selected rotation'
+    : 'Compare all rotations';
+
+  const onCtaNext = () => {
+    tap();
+    setActive(active === 'alternatives' ? 'overview' : 'alternatives');
+  };
 
   return (
-    <FlowScreen step={5} action={strings.restart} onNext={() => { reset(); go(1); }}>
+    <FlowScreen step={5} action={ctaAction} onNext={onCtaNext}>
       {(inset) => (
-        <>
-          <View style={styles.planBase} />
-          {map.data && <Backdrop image={map.data.image} kind="parcel" />}
-          <View pointerEvents="none" style={styles.parcel}><FieldOverlay points={points} closed fit /></View>
+        <View style={styles.screenBase}>
           <PlanSheet
-            subtitle={plan ? strings.planSubtitle(plan.area, activeRotation ? activeRotation.slots.length : plan.timeline.length) : undefined}
+            subtitle={plan ? `${plan.area} · ${slots.length} crops` : undefined}
             tabs={tabs}
             active={active}
+            top={inset.top}
             bottom={inset.bottom}
-            headerActions={headerActions}
-            onTab={(id) => { tap(); setActive(id); }}
+            onTab={(id) => {
+              tap();
+              setActive(id);
+            }}
           >
             <ScrollFrame bottom={inset.bottom}>
               <ScrollView
@@ -320,44 +336,98 @@ export default function PlanScreen() {
               >
                 <Feedback state={state} layout="plan" onRetry={refresh}>
                   {plan && (active === 'overview'
-                    ? <Overview plan={plan} rotation={activeRotation} />
-                    : <RotationTimeline plan={plan} rotation={activeRotation} />)}
+                    ? (
+                      <Overview
+                        plan={plan}
+                        rotation={activeRotation}
+                        slots={slots}
+                        focusedIndex={safeFocusedIndex}
+                        hasInteracted={hasInteracted}
+                        onFocusSlot={(idx, mark = true) => {
+                          if (mark) setHasInteracted(true);
+                          setFocusedIndex(idx);
+                        }}
+                        onReset={() => {
+                          setHasInteracted(false);
+                          setFocusedIndex(0);
+                        }}
+                        onOpenAlternatives={() => {
+                          tap();
+                          setActive('alternatives');
+                        }}
+                      />
+                    )
+                    : active === 'timeline'
+                      ? <RotationTimeline plan={plan} rotation={activeRotation} />
+                      : plan.rotations.length > 0
+                        ? (
+                          <AlternativesList
+                            rotations={plan.rotations}
+                            selectedId={activeRotation?.id}
+                            onSelect={(id) => {
+                              tap();
+                              selectRotation(id);
+                              setFocusedIndex(0);
+                              setHasInteracted(false);
+                              setActive('overview');
+                            }}
+                          />
+                        )
+                        : (
+                          <Surface kind="card" rounding={radius.tile} style={styles.emptyCard}>
+                            <Label variant="button" tone="cream">Single rotation active</Label>
+                            <Label variant="caption" tone="sage">
+                              Additional crop rotation alternatives appear when multiple seasonal combinations fit this field.
+                            </Label>
+                          </Surface>
+                        ))}
                 </Feedback>
               </ScrollView>
             </ScrollFrame>
           </PlanSheet>
-        </>
+        </View>
       )}
     </FlowScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  planBase: { ...StyleSheet.absoluteFill, backgroundColor: colors.forest900 },
-  parcel: { position: 'absolute', start: 0, end: 0, top: size.parcelTop, height: size.parcelHeight },
-  content: { paddingHorizontal: space.gutter, paddingVertical: space.lg, gap: space.md },
-  headerActions: { gap: space.sm },
-  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  rotationStrip: { gap: space.sm, paddingVertical: space.xxs },
-  selectedRotationChip: { backgroundColor: colors.accent, borderRadius: radius.pill },
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
-  riskPill: {
+  screenBase: { flex: 1, backgroundColor: colors.forest900 },
+  content: { paddingHorizontal: space.gutter, paddingTop: space.sm, paddingBottom: space.xl, gap: space.md },
+  highlightStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  highlightLeft: { flex: 1, minWidth: 0, gap: space.xxs },
+  scorePill: {
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
     borderRadius: radius.pill,
-    backgroundColor: colors.highlight,
+    backgroundColor: colors.accent,
+  },
+  statsCard: { padding: space.lg },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: space.md },
+  quarterStat: { flexBasis: '25%', paddingEnd: space.sm },
+  halfStat: { flexBasis: '50%', paddingEnd: space.sm },
+  timelineList: { gap: 0 },
+  connectorWrap: { alignItems: 'center', paddingVertical: space.xxs },
+  connectorLine: { width: 2, height: space.md, backgroundColor: colors.accentBorder },
+  connectorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.tight,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.forest800,
     borderWidth: size.hairline,
     borderColor: colors.accentBorder,
+    maxWidth: '100%',
   },
-  riskPillDanger: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: space.lg, marginTop: space.xs },
-  smallStat: { flexBasis: '25%', paddingEnd: space.sm },
-  wideStat: { flexBasis: '50%', paddingEnd: space.sm },
-  infoCard: { padding: space.lg, gap: space.xs },
-  infoHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.sm },
-  expiryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.xxs },
-  expiryItem: { gap: space.xxs },
-  slotGroup: { gap: space.sm },
-  connectorCard: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.xxs },
-  water: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: space.tight },
+  connectorText: { flexShrink: 1 },
+  emptyCard: { padding: space.lg, gap: space.xs },
 });

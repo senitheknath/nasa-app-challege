@@ -1,7 +1,7 @@
 import { measurementSchema, mapSchema, placesSchema, type FieldDto } from '@/features/area/model';
 import { countryDataSchema } from '@/features/country/model';
 import { categoriesSchema, cropPageSchema } from '@/features/crop/model';
-import { climateResponseSchema, monitorResponseSchema, satelliteResponseSchema } from '@/features/monitor/model';
+import { climateResponseSchema, monitorResponseSchema, satelliteResponseSchema, type MonitorRequestDto } from '@/features/monitor/model';
 import { planSchema, type PlanRequestDto } from '@/features/plan/model';
 import { strategiesSchema } from '@/features/strategy/model';
 import type { GeoPoint } from '@/state/usePlanner';
@@ -89,6 +89,15 @@ type RawRotationsResponse = {
     overall_status?: string;
     summary?: string;
     ease_adjusted_score?: number;
+    transition?: {
+      status?: string | null;
+      summary?: string | null;
+      benefits?: string[] | null;
+    } | null;
+    easiness_matrix?: {
+      easiness_tier?: string | null;
+      easiness_score?: number | null;
+    } | null;
     timeline?: {
       overall_status?: string;
       feasible?: boolean;
@@ -363,6 +372,23 @@ export const endpoints = {
       ? geo.perimeterKm
       : Number((Math.sqrt(Math.max(hectares, 0.01) * 10000) * 4 / 1000).toFixed(2));
 
+    const resolvedLat = res.location?.latitude ?? body.latitude;
+    const resolvedLon = res.location?.longitude ?? body.longitude;
+    if (
+      typeof resolvedLat === 'number' &&
+      Number.isFinite(resolvedLat) &&
+      typeof resolvedLon === 'number' &&
+      Number.isFinite(resolvedLon)
+    ) {
+      void endpoints.prefetchEarthData({
+        country: body.countryId,
+        latitude: resolvedLat,
+        longitude: resolvedLon,
+        boundary,
+        area_ha: Number.isFinite(hectares) ? hectares : null,
+      });
+    }
+
     return measurementSchema.parse({
       hectares,
       acres,
@@ -380,8 +406,8 @@ export const endpoints = {
         res.autofill?.climate?.temperature_mean_c ??
         null,
       wetness: res.autofill?.wetness?.value ?? null,
-      latitude: res.location?.latitude ?? body.latitude,
-      longitude: res.location?.longitude ?? body.longitude,
+      latitude: resolvedLat,
+      longitude: resolvedLon,
     });
   },
 
@@ -557,8 +583,44 @@ export const endpoints = {
     });
   },
 
-  monitor3d: async (body: unknown, signal: AbortSignal) =>
-    monitorResponseSchema.parse(await rawRequest({ method: 'POST', path: '/api/earth-data/monitor-3d', body, signal })),
+  monitor3d: async (
+    body: (MonitorRequestDto & { stage?: 'fast' | 'full' }) | (Record<string, unknown> & { stage?: 'fast' | 'full' }),
+    signal: AbortSignal,
+  ) => {
+    const payload = body && typeof body === 'object' ? { ...body } : {};
+    return monitorResponseSchema.parse(
+      await rawRequest({ method: 'POST', path: '/api/earth-data/monitor-3d', body: payload, signal }),
+    );
+  },
+
+  prefetchEarthData: async (
+    body: {
+      country?: string;
+      latitude: number;
+      longitude: number;
+      boundary?: readonly GeoPoint[];
+      area_ha?: number | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    if (!Number.isFinite(body.latitude) || !Number.isFinite(body.longitude)) return;
+    try {
+      await rawRequest({
+        method: 'POST',
+        path: '/api/earth-data/prefetch',
+        body: {
+          country: body.country,
+          latitude: body.latitude,
+          longitude: body.longitude,
+          boundary: toGeoJsonPolygon(body.boundary),
+          area_ha: body.area_ha ?? undefined,
+        },
+        signal,
+      });
+    } catch {
+      // Prefetching is best-effort and must never disrupt the UI.
+    }
+  },
 
   satellite: async (body: unknown, signal: AbortSignal) =>
     satelliteResponseSchema.parse(await rawRequest({ method: 'POST', path: '/api/earth-data/satellite', body, signal })),
