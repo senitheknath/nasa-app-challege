@@ -1,47 +1,83 @@
-# CRESCO
+# CRESCO Mobile Application
 
-CRESCO is an Expo SDK 58 crop rotation planner for Android, iOS, and web. Its five screens follow the supplied Figma Make prototype. It starts with mock data.
+**CRESCO** is a cross-platform agricultural decision support and crop rotation planner built with **Expo SDK 58** and **React Native** for Android, iOS, and Web, developed for the **NASA Space Apps Challenge**.
 
-## Windows setup
+For the comprehensive system architecture, NASA data sources, and scientific modeling details, see the root [README.md](../README.md).
 
-Use a supported Node.js version, npm, and PowerShell.
+---
 
-```powershell
-Set-Location 'C:\Users\aksek\Documents\nasa-apps-react'
+## Quick Start
+
+### 1. Install Dependencies
+```bash
 npm ci
-Copy-Item .env.example .env.local
+```
+
+### 2. Configure Environment
+```bash
+# Copy example configuration
+cp .env.example .env.local
+```
+
+| Environment Variable | Description | Default |
+| :--- | :--- | :--- |
+| `EXPO_PUBLIC_API_BASE_URL` | AgroShift backend URL (without trailing slash) | `https://agro.332536.xyz` |
+| `EXPO_PUBLIC_USE_MOCKS` | Set to `true` to run offline using bundled mock data | `false` |
+| `EXPO_PUBLIC_MOCK_ERRORS` | Error simulation mode: `off`, `transient`, or `always` | `off` |
+
+### 3. Launch Development Server
+```bash
+# Start Expo development bundler
 npx expo start
+
+# Or start directly in web browser
+npm run web
 ```
+- Press `w` to open in browser ([http://localhost:8081](http://localhost:8081)).
+- Press `a` to open in connected Android emulator / device.
+- Press `i` to open in iOS simulator (macOS only).
+- Scan the QR code with **Expo Go** on Android/iOS.
 
-Press `w` for the browser. The browser preview also starts directly with `npm run web`. For Android, use a connected device, an emulator, or an Expo development build. Use an iOS device or an iOS development build when developing from Windows. Config plugin changes take effect after rebuilding the native app.
+---
 
-Open `/dev/gallery` in the development preview to inspect reusable components. Production builds redirect that route to the country screen.
+## Available Scripts
 
-## Data configuration
+| Script | Command | Description |
+| :--- | :--- | :--- |
+| `npm start` | `expo start` | Start the Expo CLI development server |
+| `npm run web` | `expo start --web` | Start the interactive web preview |
+| `npm run android` | `expo run:android` | Build and run native Android project |
+| `npm run ios` | `expo run:ios` | Build and run native iOS project |
+| `npm run lint` | `expo lint` | Lint codebase with ESLint & Expo config |
+| `npm run typecheck` | `tsc --noEmit` | Check TypeScript types without emitting files |
+| `npm test` | `jest` | Run test suite with Jest |
 
-| Variable | Behavior |
-| --- | --- |
-| `EXPO_PUBLIC_USE_MOCKS` | `true` (default) selects the mock transport. Set to `false` to use HTTP. |
-| `EXPO_PUBLIC_API_BASE_URL` | API origin or base path without a trailing slash. Required for HTTP. Use a host reachable from your device. |
-| `EXPO_PUBLIC_MOCK_ERRORS` | Omit for occasional transient errors. Use `off` for repeatable visual QA or `always` to test retry states. |
+---
 
-To connect the real API, implement [API_CONTRACT.md](API_CONTRACT.md), set the base URL and disable mocks in `.env.local`, then restart Expo and reload. The app validates JSON in both modes. Real authorization tokens are provided to `tokenStore.set` by a future sign-in flow. Requests attach a bearer token when present. A 401 clears the token and sends the user to the session-expiry placeholder. Native token storage uses SecureStore. Browser tokens live in memory for the current page session. Use HTTPS when deploying and keep secrets out of `EXPO_PUBLIC_*`.
+## Application Structure
 
-The mock map uses the aerial photo from the prototype and its field measurement scale. Place suggestions can be picked, and the drawing preview uses normalized image coordinates. Plans are previews for the current draft.
+- `src/app/` — Expo Router file-based route definitions (`index`, `area`, `strategy`, `crop`, `plan`, `monitor`, `cresco`, `login`).
+- `src/api/` — API transport client, query keys, session token persistence, and endpoints.
+- `src/features/` — Feature-sliced modules (Screen components, hooks, DTOs, and view-models).
+- `src/components/` — Design system primitives, glassmorphism containers, 3D SVG canvases, and interactive cards.
+- `src/state/` — Zustand store for farm drafts, polygon geometry, and uncertainty thresholds.
+- `src/theme/` — Design tokens (colors, typography, spacing, radius, and shadows).
+- `src/i18n/` — Agricultural UI copy and string constants.
+- `src/utils/` — Unit conversions, date formatters, and native haptics.
+- `tests/` — Automated tests covering API contracts, geometry, and session handling.
 
-## Project structure
+---
 
-- `src/app` contains Expo Router routes and the root providers.
-- `src/features` contains screens, DTO schemas, view models, mappers, and queries.
-- `src/api` contains environment selection, endpoint functions, authenticated transport, query keys, and connectivity integration.
-- `src/mocks` contains example data, preview calculations, latency, and error simulation.
-- `src/state` holds the in-progress selections and drawing in Zustand. TanStack Query owns remote data.
-- `src/components`, `src/theme`, `src/i18n`, and `src/utils` contain the UI kit, design tokens, static copy, and formatting.
+## Design System & Development Preview
 
-```powershell
-npm run lint
-npm run typecheck
-npm test -- --runInBand
-```
+- Visit `/dev/gallery` in the development build to preview all reusable design system components, typography styles, and interactive cards.
+- Design tokens adhere to the Figma specification: deep forest palette (`#12170C`), luminous lime accents (`#C8F31D`), and accessible glass surfaces.
 
-See [FIGMA_INVENTORY.md](FIGMA_INVENTORY.md), [DECISIONS.md](DECISIONS.md), and [QA_REPORT.md](QA_REPORT.md) for design and verification details.
+---
+
+## Documentation
+
+- [API Contract](API_CONTRACT.md) — REST API specifications and Zod DTO definitions.
+- [Implementation Decisions](DECISIONS.md) — Technical tradeoffs and architecture decisions.
+- [Figma Inventory](FIGMA_INVENTORY.md) — Component mapping and visual specification.
+- [QA Report](QA_REPORT.md) — Verification checklist and screen comparison notes.
