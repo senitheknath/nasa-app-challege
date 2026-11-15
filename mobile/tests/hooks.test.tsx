@@ -6,12 +6,14 @@ import { keys } from '@/api/keys';
 import { ApiError } from '@/api/errors';
 import { useCrops } from '@/features/crop/hooks';
 import { usePlan } from '@/features/plan/hooks';
-import { crops } from '@/mocks/catalog';
+import { useStrategies } from '@/features/strategy/hooks';
+import { getSelectedStrategy } from '@/features/strategy/model';
+import { crops, strategies } from '@/mocks/catalog';
 import { buildMockPlan } from '@/mocks/agronomy';
 import type { PlanRequestDto } from '@/features/plan/model';
 
 jest.mock('expo-secure-store', () => ({}));
-jest.mock('@/api/endpoints', () => ({ endpoints: { crops: jest.fn(), plan: jest.fn() } }));
+jest.mock('@/api/endpoints', () => ({ endpoints: { crops: jest.fn(), plan: jest.fn(), strategies: jest.fn() } }));
 
 const mockCrops = jest.mocked(endpoints.crops);
 const mockPlan = jest.mocked(endpoints.plan);
@@ -43,9 +45,21 @@ test('paginates by cursor and keeps filtered queries separate', async () => {
   expect(client.getQueryData(keys.crops('LK', '', 'cereals'))).toBeDefined();
 });
 
+test('ignores a retired Rotation cycle option and falls back to Current crop', async () => {
+  jest.mocked(endpoints.strategies).mockResolvedValueOnce([
+    ...strategies,
+    { id: 'rotation', tag: 'Rotation', title: 'Rotation cycle', description: 'Maha and Yala seasons', requiresCrop: true },
+  ]);
+  const { wrapper } = setup();
+  const { result } = await renderHook(() => useStrategies('LK'), { wrapper });
+  await waitFor(() => expect(result.current.data?.map((strategy) => strategy.id)).toEqual(['fallow', 'standing']));
+  expect(getSelectedStrategy(result.current.data, 'rotation', 'rotation')?.id).toBe('standing');
+  expect(getSelectedStrategy(result.current.data, 'fallow', 'standing')?.requiresCrop).toBe(false);
+});
+
 test('waits for a valid draft and refetches a failed plan', async () => {
   const draft: PlanRequestDto = {
-    countryId: 'LK', strategyId: 'rotation', cropId: 'rice', sowingDate: '2026-11-15',
+    countryId: 'LK', strategyId: 'standing', cropId: 'rice', sowingDate: '2026-11-15',
     points: [{ x: 10, y: 10 }, { x: 60, y: 10 }, { x: 60, y: 70 }],
   };
   mockPlan.mockRejectedValueOnce(new ApiError('http', 503)).mockResolvedValueOnce(buildMockPlan(draft));

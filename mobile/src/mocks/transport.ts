@@ -52,7 +52,7 @@ export async function mockRequest(request: Request): Promise<unknown> {
     case '/v1/countries':
       return {
         defaultCountryId: 'LK', currentSeason: seasonOf(new Date()), cropCount: crops.length, seasonCount: 2,
-        defaultStrategyId: 'rotation', defaultCropId: 'rice', countries,
+        defaultStrategyId: 'standing', defaultCropId: 'rice', countries,
       };
     case '/v1/map':
       return query?.country === 'LK' ? { imageUrl: aerialUrl } : null;

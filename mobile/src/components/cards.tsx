@@ -48,7 +48,7 @@ export function ChoiceCard({ selected, onPress, tag, title, details, kind = 'str
 }) {
   const { reducedMotion } = useTheme();
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress}
+    <Pressable accessibilityRole="button" accessibilityState={{ selected }} aria-pressed={selected} onPress={onPress}
       style={({ pressed }) => pressed && !reducedMotion && styles.pressed}>
       <Surface kind={selected ? 'selected' : 'card'} style={[styles.selection, kind === 'strategy' && styles.strategy]}>
         <View style={styles.selectionBody}>

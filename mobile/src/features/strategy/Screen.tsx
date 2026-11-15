@@ -14,6 +14,7 @@ import { useMeasurement } from '../area/hooks';
 import { useCountryData } from '../country/hooks';
 import { continueTo, FlowScreen, ScreenScroll } from '../planner/FlowScreen';
 import { useStrategies } from './hooks';
+import { getSelectedStrategy } from './model';
 
 export default function StrategyScreen() {
   const countryId = usePlanner((draft) => draft.countryId);
@@ -25,7 +26,7 @@ export default function StrategyScreen() {
   const strategies = useStrategies(countryId);
   const field = useMemo(() => closed ? { countryId, points } : null, [closed, countryId, points]);
   const measurement = useMeasurement(field);
-  const selected = strategies.data?.find((item) => item.id === (chosen ?? country.data?.defaultStrategyId)) ?? strategies.data?.[0];
+  const selected = getSelectedStrategy(strategies.data, chosen, country.data?.defaultStrategyId);
   const offline = useOffline();
   const state = viewState({
     isPending: country.isPending || strategies.isPending || measurement.isPending,

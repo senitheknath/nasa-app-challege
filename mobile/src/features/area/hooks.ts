@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { Image } from 'expo-image';
 import { endpoints } from '@/api/endpoints';
+import { ApiError } from '@/api/errors';
 import { keys } from '@/api/keys';
 import { cache } from '@/api/query';
 import { useMocks } from '@/api/config';
@@ -9,7 +11,13 @@ import { mapFieldMap, mapMeasurement, mapPlace, type FieldDto } from './model';
 export function useFieldMap(country: string) {
   return useQuery({
     queryKey: keys.map(country), enabled: !!country, staleTime: cache.map,
-    queryFn: ({ signal }) => endpoints.map(country, signal),
+    queryFn: async ({ signal }) => {
+      const dto = await endpoints.map(country, signal);
+      if (dto && !useMocks && !await Image.prefetch(dto.imageUrl, { cachePolicy: 'disk' })) {
+        throw new ApiError('network', undefined, 'MAP_IMAGE_UNAVAILABLE');
+      }
+      return dto;
+    },
     select: (dto) => dto && useMocks ? { image: pictures.aerial } : mapFieldMap(dto),
   });
 }

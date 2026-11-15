@@ -1,5 +1,5 @@
 import { Redirect, router } from 'expo-router';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
 import {
   Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, type ScrollViewProps,
 } from 'react-native';
@@ -13,6 +13,7 @@ import { useTheme } from '@/theme/useTheme';
 import { tap } from '@/utils/haptics';
 import { useCountryData } from '../country/hooks';
 import { useStrategies } from '../strategy/hooks';
+import { getSelectedStrategy } from '../strategy/model';
 
 export const routes = ['/', '/area', '/strategy', '/crop', '/plan'] as const;
 export type Step = 1 | 2 | 3 | 4 | 5;
@@ -41,7 +42,7 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
   const reached = usePlanner((draft) => draft.reached);
   const country = useCountryData();
   const strategies = useStrategies(step > 2 ? countryId : '');
-  const selected = strategies.data?.find((strategy) => strategy.id === (chosenStrategy ?? country.data?.defaultStrategyId));
+  const selected = getSelectedStrategy(strategies.data, chosenStrategy, country.data?.defaultStrategyId);
   const skipCrop = selected?.requiresCrop === false;
 
   const safe = useSafeAreaInsets();
@@ -56,7 +57,8 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  if (step > reached || (step > 1 && !countryId)) return <Redirect href="/" />;
+  if (step > 1 && !countryId) return <Redirect href="/" />;
+  if (step > reached) return <Redirect href={routes[reached - 1]} />;
   if (step === 4 && skipCrop) return <Redirect href="/strategy" />;
 
   const label = country.data?.countries.find((item) => item.id === countryId)?.name ?? '';
@@ -89,9 +91,21 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
   );
 }
 
-export function ScreenScroll({ inset, style, contentContainerStyle, ...props }: ScrollViewProps & { inset: Clearance }) {
-  return <ScrollView {...props} style={[styles.flex, style]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
-    contentContainerStyle={[styles.scroll, { paddingTop: inset.top, paddingBottom: inset.bottom }, contentContainerStyle]} />;
+export function ScrollFrame({ bottom, children }: { bottom: number; children: ReactNode }) {
+  // Reserve footer space on the wrapper. Web ScrollView forwards margins to two DOM nodes.
+  return <View style={[styles.flex, { marginBottom: Math.max(0, bottom - space.lg) }]}>{children}</View>;
+}
+
+export function ScreenScroll({ inset, style, contentContainerStyle, scrollRef, ...props }: ScrollViewProps & {
+  inset: Clearance;
+  scrollRef?: Ref<ComponentRef<typeof ScrollView>>;
+}) {
+  return (
+    <ScrollFrame bottom={inset.bottom}>
+      <ScrollView {...props} ref={scrollRef} style={[styles.flex, style]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.scroll, { paddingTop: inset.top, paddingBottom: space.lg }, contentContainerStyle]} />
+    </ScrollFrame>
+  );
 }
 
 const styles = StyleSheet.create({

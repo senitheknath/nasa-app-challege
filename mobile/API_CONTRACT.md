@@ -27,7 +27,7 @@ type CountryDataDto = {
   "currentSeason": "Maha",
   "cropCount": 10,
   "seasonCount": 2,
-  "defaultStrategyId": "rotation",
+  "defaultStrategyId": "standing",
   "defaultCropId": "rice",
   "countries": [
     { "id": "IN", "name": "India", "supported": false },
@@ -63,7 +63,7 @@ type Response = PlaceDto[]
 
 ## POST /v1/fields/measure
 
-Body `FieldDto`. Points are the ordered vertices of an implicitly closed polygon in normalized canvas coordinates from 0 to 100, with the origin at the top left. Require at least three vertices and use the country map's documented scale. Return the preview geometry in hectares, acres, and kilometers. This computation is repeatable and has no storage side effects.
+Body `FieldDto`. Points are the ordered vertices of an implicitly closed polygon in normalized canvas coordinates from 0 to 100, with the origin at the top left. Require at least three distinct vertices with positive area and no crossing edges. Use the country map's documented scale. Return the preview geometry in hectares, acres, and kilometers. This computation is repeatable and has no storage side effects.
 
 ```ts
 type Point = { x: number; y: number }
@@ -85,7 +85,7 @@ Example response
 
 ## GET /v1/strategies
 
-Query `country` is a supported country ID. Return available strategies in display order. `requiresCrop` controls whether selection continues through Crop or opens the Plan preview directly.
+Query `country` is a supported country ID. Return Fallow and Current crop in display order. `requiresCrop` controls whether selection continues through Crop or opens the Plan preview directly.
 
 ```ts
 type StrategyDto = { id: string; tag: string; title: string; description: string; requiresCrop: boolean }
@@ -95,8 +95,7 @@ type Response = StrategyDto[]
 ```json
 [
   { "id": "fallow", "tag": "Fallow", "title": "No rotation", "description": "Newly cleared land", "requiresCrop": false },
-  { "id": "standing", "tag": "Standing", "title": "Current crop", "description": "Already planted", "requiresCrop": true },
-  { "id": "rotation", "tag": "Rotation", "title": "Rotation cycle", "description": "Maha and Yala seasons", "requiresCrop": true }
+  { "id": "standing", "tag": "Standing", "title": "Current crop", "description": "Already planted", "requiresCrop": true }
 ]
 ```
 
@@ -153,7 +152,7 @@ Example body
 {
   "countryId": "LK",
   "points": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10}],
-  "strategyId": "rotation",
+  "strategyId": "standing",
   "cropId": "rice",
   "sowingDate": "2026-11-15"
 }
@@ -164,7 +163,7 @@ Example response
 ```json
 {
   "hectares": 5,
-  "strategyTag": "Rotation",
+  "strategyTag": "Standing",
   "crop": {
     "id": "rice", "name": "Paddy Rice", "category": {"id": "cereals", "label": "Cereals"},
     "yieldTonnesPerHectare": 5.2, "waterPercent": 85

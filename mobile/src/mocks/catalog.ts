@@ -29,7 +29,6 @@ export const crops = [
 export const strategies: StrategyDto[] = [
   { id: 'fallow', tag: 'Fallow', title: 'No rotation', description: 'Newly cleared land', requiresCrop: false },
   { id: 'standing', tag: 'Standing', title: 'Current crop', description: 'Already planted', requiresCrop: true },
-  { id: 'rotation', tag: 'Rotation', title: 'Rotation cycle', description: 'Maha and Yala seasons', requiresCrop: true },
 ];
 
 export const places: PlaceDto[] = [
