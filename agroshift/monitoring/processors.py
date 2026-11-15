@@ -1,6 +1,7 @@
 """Physical satellite, raster, soil, and terrain processing primitives."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 import math
@@ -122,13 +123,13 @@ def process_soil_3d_profile(
     any_verified = False
     retrieved_at = None
 
+    tasks: list[tuple[str, str, str, str, dict[str, Any]]] = []
     for prop in properties:
         if prop not in SOILGRIDS_PROPERTIES:
             continue
         for depth in depths:
             if depth not in SOILGRIDS_DEPTHS:
                 continue
-            q_entry: dict[str, Any] = {}
             for q in quantiles:
                 cov_id = f"{prop}_{depth}_{q}"
                 params = {
@@ -143,48 +144,59 @@ def process_soil_3d_profile(
                     "OUTPUTCRS": crs,
                     "SUBSET": [f"X({lon-.005:.7f},{lon+.005:.7f})", f"Y({lat-.005:.7f},{lat+.005:.7f})"],
                 }
+                tasks.append((prop, depth, q, cov_id, params))
 
-                def _parse_cell(body: bytes, p_name: str = prop) -> dict[str, Any]:
-                    with Image.open(BytesIO(body)) as grid:
-                        if grid.format != "TIFF" or grid.size != (5, 5):
-                            raise ValueError("Unexpected SoilGrids raster size")
-                        raw = extract_raster_pixel(grid, lat, lon)
-                        if not isinstance(raw, int) or str(raw) == str(grid.tag_v2.get(42113)):
-                            raise DataError(f"No usable SoilGrids {p_name} estimate at this location.")
-                        norm = normalize_soilgrids_value(p_name, raw)
-                        if not norm["valid"]:
-                            raise DataError(f"Out-of-range SoilGrids {p_name} estimate.")
-                        return norm
+    def _fetch_one(task: tuple[str, str, str, str, dict[str, Any]]) -> dict[str, Any]:
+        p_name, _depth, _q, cov_id, params = task
 
-                res = reference(
-                    SOIL,
-                    params,
-                    _parse_cell,
-                    kind="modelled",
-                    detail=f"ISRIC SoilGrids 2.0 {cov_id} (250 m source grid).",
-                    offline=offline,
-                    record=record,
-                    source="https://docs.isric.org/globaldata/soilgrids/WCS_from_Python.html",
-                )
-                if res["status"] == "verified" and isinstance(res["value"], dict):
-                    any_verified = True
-                    retrieved_at = retrieved_at or res["retrieved_at"]
-                    q_entry[q] = res["value"]["normalized_value"]
-                    if q == "mean":
-                        q_entry["raw_mean"] = res["value"]["raw_value"]
-                        q_entry["original_unit"] = res["value"]["original_unit"]
-                        q_entry["normalized_unit"] = res["value"]["normalized_unit"]
-                        q_entry["conversion_method"] = res["value"]["conversion_method"]
-                    provenance_cells.append(
-                        {
-                            "coverage_id": cov_id,
-                            "access": res["access"],
-                            "retrieved_at": res["retrieved_at"],
-                            **res["value"],
-                        }
-                    )
-            if q_entry:
-                layers_by_depth[depth][prop] = q_entry
+        def _parse_cell(body: bytes) -> dict[str, Any]:
+            with Image.open(BytesIO(body)) as grid:
+                if grid.format != "TIFF" or grid.size != (5, 5):
+                    raise ValueError("Unexpected SoilGrids raster size")
+                raw = extract_raster_pixel(grid, lat, lon)
+                if not isinstance(raw, int) or str(raw) == str(grid.tag_v2.get(42113)):
+                    raise DataError(f"No usable SoilGrids {p_name} estimate at this location.")
+                norm = normalize_soilgrids_value(p_name, raw)
+                if not norm["valid"]:
+                    raise DataError(f"Out-of-range SoilGrids {p_name} estimate.")
+                return norm
+
+        return reference(
+            SOIL,
+            params,
+            _parse_cell,
+            kind="modelled",
+            detail=f"ISRIC SoilGrids 2.0 {cov_id} (250 m source grid).",
+            offline=offline,
+            record=record,
+            source="https://docs.isric.org/globaldata/soilgrids/WCS_from_Python.html",
+        )
+
+    if tasks:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(_fetch_one, tasks))
+    else:
+        results = []
+
+    for (prop, depth, q, cov_id, _params), res in zip(tasks, results):
+        if res["status"] == "verified" and isinstance(res["value"], dict):
+            any_verified = True
+            retrieved_at = retrieved_at or res["retrieved_at"]
+            q_entry = layers_by_depth[depth].setdefault(prop, {})
+            q_entry[q] = res["value"]["normalized_value"]
+            if q == "mean":
+                q_entry["raw_mean"] = res["value"]["raw_value"]
+                q_entry["original_unit"] = res["value"]["original_unit"]
+                q_entry["normalized_unit"] = res["value"]["normalized_unit"]
+                q_entry["conversion_method"] = res["value"]["conversion_method"]
+            provenance_cells.append(
+                {
+                    "coverage_id": cov_id,
+                    "access": res["access"],
+                    "retrieved_at": res["retrieved_at"],
+                    **res["value"],
+                }
+            )
 
     # Fallback to top-5cm pH archive if only phh2o_0-5cm_mean is archived offline
     if not any_verified:
@@ -488,32 +500,103 @@ def compute_layer_update_frequencies(
     }
 
 
+class ProgressiveFusionAccumulator:
+    """Recursive inverse-variance MVUE accumulator tracking step-by-step uncertainty reduction."""
+
+    def __init__(self) -> None:
+        self._precision_sum: float = 0.0
+        self._weighted_sum: float = 0.0
+        self._min_input_sigma: float = float("inf")
+        self._sources: list[str] = []
+        self._convergence_steps: list[dict[str, Any]] = []
+
+    def update(self, source_name: str, value: float, sigma: float) -> dict[str, Any]:
+        """Incorporate a newly arrived sensor estimate and record its convergence snapshot."""
+        val_f = float(value)
+        sig_f = float(sigma)
+        if not math.isfinite(val_f):
+            raise ValueError(f"Measurement value must be finite, got {value}.")
+        if not math.isfinite(sig_f) or sig_f <= 0.0:
+            raise ValueError(f"Measurement sigma must be positive, got {sigma}.")
+
+        w = 1.0 / (sig_f * sig_f)
+        self._precision_sum += w
+        self._weighted_sum += w * val_f
+        if sig_f < self._min_input_sigma:
+            self._min_input_sigma = sig_f
+        self._sources.append(str(source_name))
+
+        fused_val = self._weighted_sum / self._precision_sum
+        fused_var = 1.0 / self._precision_sum
+        fused_sig = math.sqrt(fused_var)
+        var_red = (1.0 - fused_var / (self._min_input_sigma * self._min_input_sigma)) * 100.0
+
+        snapshot = {
+            "step": len(self._convergence_steps) + 1,
+            "source": str(source_name),
+            "input_value": round(val_f, 2),
+            "input_sigma": round(sig_f, 2),
+            "fused_value": round(fused_val, 2),
+            "fused_sigma": round(fused_sig, 2),
+            "variance_reduction_pct": round(var_red, 1),
+        }
+        self._convergence_steps.append(snapshot)
+        return dict(snapshot)
+
+    @property
+    def sensor_count(self) -> int:
+        return len(self._convergence_steps)
+
+    @property
+    def sources_used(self) -> list[str]:
+        return list(self._sources)
+
+    @property
+    def convergence_steps(self) -> list[dict[str, Any]]:
+        return [dict(step) for step in self._convergence_steps]
+
+    def result(self) -> dict[str, Any]:
+        """Return the current MVUE summary and full convergence trace."""
+        if not self._convergence_steps:
+            raise ValueError("At least one (source_name, value, sigma) measurement is required.")
+        fused_val = self._weighted_sum / self._precision_sum
+        fused_var = 1.0 / self._precision_sum
+        fused_sig = math.sqrt(fused_var)
+        var_red = (1.0 - fused_var / (self._min_input_sigma * self._min_input_sigma)) * 100.0
+        return {
+            "fused_value": round(fused_val, 2),
+            "fused_sigma": round(fused_sig, 2),
+            "min_input_sigma": round(self._min_input_sigma, 2),
+            "variance_reduction_pct": round(var_red, 1),
+            "sensor_count": len(self._convergence_steps),
+            "sources_used": list(self._sources),
+            "convergence_steps": [dict(step) for step in self._convergence_steps],
+        }
+
+
+def fuse_progressive_steps(steps: list[tuple[str, float, float]]) -> dict[str, Any]:
+    """Run sequential inverse-variance MVUE updates over (source_name, value, sigma) steps."""
+    if not steps:
+        raise ValueError("At least one (source_name, value, sigma) step is required.")
+    acc = ProgressiveFusionAccumulator()
+    for source_name, value, sigma in steps:
+        acc.update(source_name, value, sigma)
+    return acc.result()
+
+
 def fuse_inverse_variance(measurements: list[tuple[float, float]]) -> dict[str, float]:
     """Combine independent (value, sigma) sensor estimates via inverse-variance MVUE weighting."""
     if not measurements:
         raise ValueError("At least one (value, sigma) measurement is required.")
-    weighted_sum = 0.0
-    total_precision = 0.0
-    min_sig = float("inf")
-    for val, sig in measurements:
-        sig_f = float(sig)
-        if sig_f <= 0.0:
-            raise ValueError(f"Measurement sigma must be positive, got {sig}.")
-        w = 1.0 / (sig_f * sig_f)
-        weighted_sum += w * float(val)
-        total_precision += w
-        if sig_f < min_sig:
-            min_sig = sig_f
-
-    fused_val = weighted_sum / total_precision
-    fused_var = 1.0 / total_precision
-    fused_sig = math.sqrt(fused_var)
-    var_reduction = (1.0 - fused_var / (min_sig * min_sig)) * 100.0
+    acc = ProgressiveFusionAccumulator()
+    for idx, (val, sig) in enumerate(measurements, start=1):
+        acc.update(f"sensor_{idx}", val, sig)
+    res = acc.result()
     return {
-        "fused_value": round(fused_val, 2),
-        "fused_sigma": round(fused_sig, 2),
-        "min_input_sigma": round(min_sig, 2),
-        "variance_reduction_pct": round(var_reduction, 1),
+        "fused_value": res["fused_value"],
+        "fused_sigma": res["fused_sigma"],
+        "min_input_sigma": res["min_input_sigma"],
+        "variance_reduction_pct": res["variance_reduction_pct"],
     }
 
 
@@ -526,21 +609,18 @@ def fuse_soil_wetness_3way(
     s2_sigma: float = 5.0,
     prior_sigma: float = 6.0,
 ) -> dict[str, Any]:
-    """Fuse Sentinel-1 SAR (10m), optional Sentinel-2 NDMI (20m), and FAO-56/SMAP prior (9km)."""
-    measurements: list[tuple[float, float]] = [(float(s1_sar_moisture_pct), float(s1_sigma))]
-    sources_used = ["sentinel1_sar"]
+    """Progressively fuse FAO-56/SMAP prior (9km), Sentinel-1 SAR (10m), and optional Sentinel-2 NDMI (20m)."""
+    steps: list[tuple[str, float, float]] = [
+        ("fao56_smap_prior", float(fao_smap_prior_pct), float(prior_sigma)),
+        ("sentinel1_sar", float(s1_sar_moisture_pct), float(s1_sigma)),
+    ]
     if s2_ndmi_moisture_pct is not None:
-        measurements.append((float(s2_ndmi_moisture_pct), float(s2_sigma)))
-        sources_used.append("sentinel2_ndmi")
-    measurements.append((float(fao_smap_prior_pct), float(prior_sigma)))
-    sources_used.append("fao56_smap_prior")
+        steps.append(("sentinel2_ndmi", float(s2_ndmi_moisture_pct), float(s2_sigma)))
 
-    fused = fuse_inverse_variance(measurements)
+    fused = fuse_progressive_steps(steps)
     return {
         **fused,
         "fused_moisture_pct": fused["fused_value"],
-        "sensor_count": len(measurements),
-        "sources_used": sources_used,
     }
 
 

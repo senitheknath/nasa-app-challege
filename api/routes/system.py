@@ -13,6 +13,7 @@ from agroshift.config import load_platform_config
 from agroshift.presets import AREA_PRESETS, DEMO_SCENARIOS, LOCATION_PRESETS, SEASON_TEMPLATES
 from agroshift.decision import CRITERIA
 from agroshift.earth_data import DEFAULT_DB_PATH, get_connection, set_cached
+import agroshift.earth_data.cache as _earth_cache
 from agroshift.knowledge import clear_cache, count_crops, crop_categories, knowledge_status
 from agroshift.locations import stations
 from agroshift.providers import GAEZ_SCALE
@@ -77,13 +78,34 @@ async def presets(_request: Request) -> Response:
     return json_response(await run_in_threadpool(_build))
 
 
+_RESOLUTION_LABELS: dict[int, str] = {
+    1: "~11 km (0.1 deg)",
+    2: "~1.1 km (0.01 deg)",
+    3: "~110 m (0.001 deg)",
+}
+
+
+def _resolve_cache_precision(data_type: str) -> int:
+    """Resolve spatial grid decimal precision for a cache data_type."""
+    resolver = getattr(_earth_cache, "resolve_precision", None)
+    if callable(resolver):
+        return int(resolver(data_type, None))
+    dt = str(data_type or "").lower()
+    if dt.startswith(("satellite_overpass", "satellite_sensor")):
+        return 1
+    if dt.startswith(("soil_grids", "soil_wcs")):
+        return 2
+    return 3
+
+
 async def cache_status(_request: Request) -> Response:
     """Inspect spatial GeoCache, memory climate cache, and knowledge database status."""
     try:
         def _run():
-            geo_stats = {}
+            geo_stats: dict[str, int] = {}
             db_size_kb = 0.0
             total_cells = 0
+            provider_cache_entries = 0
             if DEFAULT_DB_PATH.exists():
                 db_size_kb = round(DEFAULT_DB_PATH.stat().st_size / 1024, 1)
                 with get_connection() as conn:
@@ -94,6 +116,54 @@ async def cache_status(_request: Request) -> Response:
                         geo_stats[r["data_type"]] = r["count"]
                     row = conn.execute("SELECT count(*) FROM geo_cache").fetchone()
                     total_cells = row[0] if row else 0
+                    try:
+                        prow = conn.execute("SELECT count(*) FROM provider_cache").fetchone()
+                        provider_cache_entries = prow[0] if prow else 0
+                    except Exception:
+                        provider_cache_entries = 0
+
+            precision_by_type: dict[str, int] = {}
+            by_resolution: dict[str, dict[str, object]] = {
+                f"precision_{p}": {
+                    "precision": p,
+                    "approx_resolution": label,
+                    "entries": 0,
+                    "types": {},
+                }
+                for p, label in sorted(_RESOLUTION_LABELS.items())
+            }
+            sensor_entries = 0
+            sensors_cached: list[str] = []
+            for dtype, cnt in geo_stats.items():
+                prec = _resolve_cache_precision(dtype)
+                precision_by_type[dtype] = prec
+                tier_key = f"precision_{prec}"
+                if tier_key not in by_resolution:
+                    by_resolution[tier_key] = {
+                        "precision": prec,
+                        "approx_resolution": _RESOLUTION_LABELS.get(prec, f"precision_{prec}"),
+                        "entries": 0,
+                        "types": {},
+                    }
+                by_resolution[tier_key]["entries"] = int(by_resolution[tier_key]["entries"]) + int(cnt)
+                by_resolution[tier_key]["types"][dtype] = cnt
+                if dtype.startswith("satellite_sensor"):
+                    sensor_entries += int(cnt)
+                    sensors_cached.append(dtype.split(":", 1)[1] if ":" in dtype else dtype)
+
+            raw_policy = getattr(_earth_cache, "RESOLUTION_PRECISION", None)
+            resolution_policy = (
+                dict(raw_policy)
+                if isinstance(raw_policy, dict)
+                else {
+                    "satellite_overpass": 1,
+                    "satellite_sensor": 1,
+                    "soil_grids": 2,
+                    "soil_wcs": 2,
+                    "terrain_dem": 3,
+                    "field_autofill": 3,
+                }
+            )
 
             with _DATASET_LOCK:
                 mem_climate_cells = len(_DATASET_CACHE)
@@ -108,7 +178,15 @@ async def cache_status(_request: Request) -> Response:
                     "db_path": str(DEFAULT_DB_PATH),
                     "db_size_kb": db_size_kb,
                     "total_entries": total_cells,
+                    "provider_cache_entries": provider_cache_entries,
                     "by_type": geo_stats,
+                    "by_resolution": by_resolution,
+                    "precision_by_type": precision_by_type,
+                    "resolution_policy": resolution_policy,
+                    "sensor_cache": {
+                        "total_entries": sensor_entries,
+                        "sensors_cached": sorted(sensors_cached),
+                    },
                 },
                 "memory_climate_cache": {
                     "total_cells": mem_climate_cells,
