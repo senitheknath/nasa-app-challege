@@ -21,21 +21,6 @@ import { Slab3DView } from './Slab3DView';
 
 type TabId = 'slab3d' | 'liveState' | 'rawTelemetry';
 
-const T_NOW_OPTIONS = [14, 42, 75, 105] as const;
-
-const NDVI_OPTIONS: readonly { label: string; value: number | null }[] = [
-  { label: 'Auto', value: null },
-  { label: 'NDVI 0.35 (Stressed)', value: 0.35 },
-  { label: 'NDVI 0.62 (Nominal)', value: 0.62 },
-  { label: 'NDVI 0.78 (Vigorous)', value: 0.78 },
-];
-
-const VOLATILITY_OPTIONS: readonly { label: string; value: number }[] = [
-  { label: 'Low 0.10', value: 0.1 },
-  { label: 'Med 0.18', value: 0.18 },
-  { label: 'High 0.30', value: 0.3 },
-];
-
 function SelectChip({
   label,
   active,
@@ -60,59 +45,6 @@ function SelectChip({
         {label}
       </Label>
     </Pressable>
-  );
-}
-
-function SimulationControls() {
-  const tNowDay = usePlanner((s) => s.tNowDay);
-  const observedNdvi = usePlanner((s) => s.observedNdvi);
-  const weatherVolatility = usePlanner((s) => s.weatherVolatility);
-  const setMonitorParams = usePlanner((s) => s.setMonitorParams);
-
-  return (
-    <Surface kind="glass" rounding={radius.card} style={styles.controlsCard}>
-      <View style={styles.controlGroup}>
-        <Label variant="tag" tone="sage">SIMULATION DAY (t_now)</Label>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          {T_NOW_OPTIONS.map((day) => (
-            <SelectChip
-              key={day}
-              label={`Day ${day}`}
-              active={tNowDay === day}
-              onPress={() => setMonitorParams({ tNowDay: day })}
-            />
-          ))}
-        </ScrollView>
-      </View>
-
-      <View style={styles.controlGroup}>
-        <Label variant="tag" tone="sage">SATELLITE NDVI OVERRIDE</Label>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          {NDVI_OPTIONS.map((opt) => (
-            <SelectChip
-              key={opt.label}
-              label={opt.label}
-              active={observedNdvi === opt.value}
-              onPress={() => setMonitorParams({ observedNdvi: opt.value })}
-            />
-          ))}
-        </ScrollView>
-      </View>
-
-      <View style={styles.controlGroup}>
-        <Label variant="tag" tone="sage">WEATHER VOLATILITY</Label>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          {VOLATILITY_OPTIONS.map((opt) => (
-            <SelectChip
-              key={opt.label}
-              label={opt.label}
-              active={Math.abs(weatherVolatility - opt.value) < 0.005}
-              onPress={() => setMonitorParams({ weatherVolatility: opt.value })}
-            />
-          ))}
-        </ScrollView>
-      </View>
-    </Surface>
   );
 }
 
@@ -546,22 +478,20 @@ export default function MonitorScreen() {
 
   const geoBoundary = useMemo(() => buildGeoBoundary(boundary), [boundary]);
 
-  const request: MonitorRequestDto | null = useMemo(() => {
-    if (!countryId) return null;
-    return {
-      country: countryId,
-      latitude,
-      longitude,
-      boundary: geoBoundary,
-      area_ha: areaHa,
-      start_date: sowingDate,
-      irrigation,
-      t_now_day: tNowDay,
-      observed_ndvi: observedNdvi,
-      weather_volatility: weatherVolatility,
-      max_sequences: 6,
-    };
-  }, [countryId, latitude, longitude, geoBoundary, areaHa, sowingDate, irrigation, tNowDay, observedNdvi, weatherVolatility]);
+  const effectiveCountry = countryId || 'LK';
+  const request: MonitorRequestDto = useMemo(() => ({
+    country: effectiveCountry,
+    latitude,
+    longitude,
+    boundary: geoBoundary,
+    area_ha: areaHa,
+    start_date: sowingDate,
+    irrigation,
+    t_now_day: tNowDay,
+    observed_ndvi: observedNdvi,
+    weather_volatility: weatherVolatility,
+    max_sequences: 6,
+  }), [effectiveCountry, latitude, longitude, geoBoundary, areaHa, sowingDate, irrigation, tNowDay, observedNdvi, weatherVolatility]);
 
   const monitor = useMonitor3D(request);
   const offline = useOffline();
@@ -574,11 +504,15 @@ export default function MonitorScreen() {
   ] as const;
 
   return (
-    <FlowScreen step={6} action={strings.restart} onNext={() => { reset(); go(1); }}>
+    <FlowScreen
+      step={2}
+      standaloneTitle={strings.monitorTitle}
+      standaloneActive
+      action={strings.restart}
+      onNext={() => { reset(); go(1); }}
+    >
       {(inset) => (
         <ScreenScroll inset={inset} contentContainerStyle={styles.scrollContent}>
-          <SimulationControls />
-
           <Segmented
             items={tabs}
             value={tab}

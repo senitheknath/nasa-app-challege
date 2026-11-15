@@ -15,9 +15,9 @@ import { useCountryData } from '../country/hooks';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
 
-export const routes = ['/', '/area', '/strategy', '/crop', '/plan', '/monitor'] as const;
-export type Step = 1 | 2 | 3 | 4 | 5 | 6;
-const titles = ['', strings.areaTitle, strings.strategyTitle, strings.cropTitle, strings.planTitle, strings.monitorTitle];
+export const routes = ['/', '/area', '/strategy', '/crop', '/plan'] as const;
+export type Step = 1 | 2 | 3 | 4 | 5;
+const titles = ['', strings.areaTitle, strings.strategyTitle, strings.cropTitle, strings.planTitle];
 
 export function go(step: Step) {
   Keyboard.dismiss();
@@ -32,12 +32,14 @@ export function continueTo(step: Step) {
 
 export type Clearance = { top: number; bottom: number };
 
-export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
+export function FlowScreen({ step, action, onNext, disabled, busy, standaloneTitle, standaloneActive, children }: {
   step: Step; action: string; onNext: () => void; disabled?: boolean; busy?: boolean;
+  standaloneTitle?: string; standaloneActive?: boolean;
   children: (inset: Clearance) => ReactNode;
 }) {
   const { reducedMotion } = useTheme();
   const countryId = usePlanner((draft) => draft.countryId);
+  const closed = usePlanner((draft) => draft.closed);
   const chosenStrategy = usePlanner((draft) => draft.strategyId);
   const reached = usePlanner((draft) => draft.reached);
   const country = useCountryData();
@@ -62,18 +64,29 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
   if (step === 4 && skipCrop) return <Redirect href="/strategy" />;
 
   const label = country.data?.countries.find((item) => item.id === countryId)?.name ?? '';
-  const back = () => go(step === 5 && skipCrop ? 3 : Math.max(1, step - 1) as Step);
+  const back = () => {
+    if (standaloneActive) {
+      Keyboard.dismiss();
+      tap();
+      if (router.canGoBack()) router.back();
+      else go(Math.min(5, reached) as Step);
+      return;
+    }
+    go(step === 5 && skipCrop ? 3 : Math.max(1, step - 1) as Step);
+  };
+  const headerTitle = standaloneTitle ?? titles[step - 1];
+  const headerSubtitle = standaloneActive ? `${label} · 3D Live Monitor` : strings.stepSubtitle(label, step, routes.length);
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.viewport}>
       <View style={styles.frame}>
         <Animated.View entering={reducedMotion ? undefined : FadeInDown.duration(motion.enter).withInitialValues({ transform: [{ translateY: motion.rise }] })}
           style={styles.viewport}>
-          {children({ top: step === 1 ? top : header + space.md, bottom: editing ? size.keyboardClearance : Math.max(size.navigation, footer) })}
+          {children({ top: step === 1 && !standaloneActive ? top : header + space.md, bottom: editing ? size.keyboardClearance : Math.max(size.navigation, footer) })}
         </Animated.View>
-        {step > 1 && (
+        {(step > 1 || standaloneActive) && (
           <View pointerEvents="box-none" style={styles.header} onLayout={(event) => setHeader(event.nativeEvent.layout.height)}>
-            <ScreenHeader title={titles[step - 1]} subtitle={strings.stepSubtitle(label, step, routes.length)}
+            <ScreenHeader title={headerTitle} subtitle={headerSubtitle}
               top={top} onBack={back} onCountry={() => go(1)} onAccount={() => router.push('/login')} />
           </View>
         )}
@@ -83,7 +96,10 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
             setFooter(event.nativeEvent.layout.height - space.fade + space.lg);
           }}>
             <ScreenFooter label={action} current={step} reached={reached} skipped={skipCrop ? 4 : undefined}
-              disabled={disabled} busy={busy} onNext={onNext} onStep={(next) => go(next as Step)} bottom={safe.bottom} />
+              disabled={disabled} busy={busy} onNext={onNext} onStep={(next) => go(next as Step)}
+              onMonitor={() => { Keyboard.dismiss(); tap(); router.navigate('/monitor'); }}
+              monitorActive={standaloneActive} monitorDisabled={!countryId || !closed}
+              bottom={safe.bottom} />
           </View>
         )}
       </View>

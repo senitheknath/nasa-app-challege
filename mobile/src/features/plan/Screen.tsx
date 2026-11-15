@@ -14,7 +14,7 @@ import { formatNumber } from '@/utils/format';
 import { tap } from '@/utils/haptics';
 import { useFieldMap } from '../area/hooks';
 import { useCountryData } from '../country/hooks';
-import { continueTo, FlowScreen, go, ScrollFrame } from '../planner/FlowScreen';
+import { FlowScreen, go, ScrollFrame } from '../planner/FlowScreen';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
 import { usePlan } from './hooks';
@@ -246,7 +246,7 @@ export default function PlanScreen() {
   const offline = useOffline();
   const state = viewState({
     isPaused: query.isPaused || strategies.isPaused || bootstrap.isPaused,
-    isPending: strategies.isPending || bootstrap.isPending || (!!draft && query.isPending),
+    isPending: strategies.isPending || bootstrap.isPending || (!!draft && (query.isPending || (query.isFetching && !query.data))),
     isError: query.isError || strategies.isError || bootstrap.isError,
   }, offline, !!query.data);
 
@@ -267,6 +267,7 @@ export default function PlanScreen() {
   const headerActions = (
     <View style={styles.headerActions}>
       <View style={styles.actionRow}>
+        <Chip label={strings.openMonitor} accent onPress={() => { tap(); router.push('/monitor'); }} />
         <Chip label={strings.saveFarm} onPress={() => { tap(); router.push('/login'); }} />
         <Chip label={strings.restart} onPress={() => { tap(); reset(); go(1); }} />
       </View>
@@ -290,7 +291,7 @@ export default function PlanScreen() {
   );
 
   return (
-    <FlowScreen step={5} action={strings.openMonitor} onNext={() => continueTo(6)}>
+    <FlowScreen step={5} action={strings.restart} onNext={() => { reset(); go(1); }}>
       {(inset) => (
         <>
           <View style={styles.planBase} />

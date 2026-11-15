@@ -111,8 +111,8 @@ export default function CountryScreen() {
             </View>
             {data && <>
               <View style={styles.tiles}>
-                <Stat label={strings.crops} value={data.crops} tile accent large style={styles.tile} />
-                <Stat label={strings.seasons} value={data.seasons} tile accent large style={styles.tile} />
+                <Stat label={strings.countries} value={data.countriesPlus} tile accent large style={styles.tile} />
+                <Stat label={strings.crops} value={data.cropsPlus} tile accent large style={styles.tile} />
                 <Stat label={strings.steps} value={formatNumber(routes.length)} tile accent large style={styles.tile} />
               </View>
               <Workflow items={workflow} />

@@ -23,22 +23,31 @@ export const stageSchema = z.object({
   duration_days: z.number(),
 });
 
+export const harvestWindowSchema = z.union([
+  z.string(),
+  z.object({
+    early_maturity: z.string().optional(),
+    nominal_maturity: z.string().optional(),
+    late_maturity: z.string().optional(),
+  }),
+]);
+
 export const slotSchema = z.object({
   crop_id: z.string(),
   crop_name: z.string(),
-  family: z.string().optional(),
-  window: z.string().optional(),
+  family: z.string().nullable().optional(),
+  window: z.string().nullable().optional(),
   sowing_date: z.string(),
   harvest_nominal_date: z.string(),
-  harvest_window: z.string().optional(),
+  harvest_window: harvestWindowSchema.nullable().optional(),
   growth_cycle_days: z.object({
     minimum: z.number(),
     nominal: z.number(),
     maximum: z.number(),
-  }).optional(),
-  stages: z.array(stageSchema).optional(),
-  kc_max: z.number().optional(),
-  delay_slack_days: z.number().optional(),
+  }).nullable().optional(),
+  stages: z.array(stageSchema).nullable().optional(),
+  kc_max: z.number().nullable().optional(),
+  delay_slack_days: z.number().nullable().optional(),
   turnaround_buffer_after_days: z.number().nullable().optional(),
   safe_expiry_date: z.string().nullable().optional(),
   hard_expiry_date: z.string().nullable().optional(),
@@ -90,18 +99,18 @@ export const timelineSchema = z.object({
   year: z.number().int(),
   crop: cropSchema,
   note: z.string(),
-  sowingDate: z.string().optional(),
-  harvestDate: z.string().optional(),
-  harvestWindow: z.string().optional(),
-  family: z.string().optional(),
-  growthDays: z.string().optional(),
-  stages: z.array(stageSchema).optional(),
+  sowingDate: z.string().nullable().optional(),
+  harvestDate: z.string().nullable().optional(),
+  harvestWindow: harvestWindowSchema.nullable().optional(),
+  family: z.string().nullable().optional(),
+  growthDays: z.string().nullable().optional(),
+  stages: z.array(stageSchema).nullable().optional(),
   turnaroundBufferDays: z.number().nullable().optional(),
-  delaySlackDays: z.number().optional(),
+  delaySlackDays: z.number().nullable().optional(),
   safeExpiryDate: z.string().nullable().optional(),
   hardExpiryDate: z.string().nullable().optional(),
   collisionProbabilityPct: z.number().nullable().optional(),
-  kcMax: z.number().optional(),
+  kcMax: z.number().nullable().optional(),
 });
 
 export const planSchema = z.object({
@@ -247,6 +256,16 @@ export function mapStages(stages?: readonly StageDto[]): MappedStage[] {
   }));
 }
 
+function formatHarvestWindow(value?: z.infer<typeof harvestWindowSchema> | null): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value || undefined;
+  if (value.early_maturity && value.late_maturity) {
+    return `${formatDate(value.early_maturity)} – ${formatDate(value.late_maturity)}`;
+  }
+  const single = value.nominal_maturity ?? value.early_maturity ?? value.late_maturity;
+  return single ? formatDate(single) : undefined;
+}
+
 function mapSlot(slot: SlotDto): MappedSlot {
   const sowingDate = formatDate(slot.sowing_date);
   const harvestDate = formatDate(slot.harvest_nominal_date);
@@ -256,16 +275,16 @@ function mapSlot(slot: SlotDto): MappedSlot {
   return {
     cropId: slot.crop_id,
     cropName: slot.crop_name,
-    family: slot.family,
-    window: slot.window,
+    family: slot.family ?? undefined,
+    window: slot.window ?? undefined,
     sowingDate,
     harvestDate,
     dateSpan: `${sowingDate} → ${harvestDate}`,
-    harvestWindow: slot.harvest_window,
+    harvestWindow: formatHarvestWindow(slot.harvest_window),
     growthDays,
-    stages: mapStages(slot.stages),
-    kcMax: slot.kc_max,
-    delaySlackDays: slot.delay_slack_days,
+    stages: mapStages(slot.stages ?? undefined),
+    kcMax: slot.kc_max ?? undefined,
+    delaySlackDays: slot.delay_slack_days ?? undefined,
     turnaroundBufferDays: slot.turnaround_buffer_after_days ?? undefined,
     safeExpiryDate: slot.safe_expiry_date ? formatDate(slot.safe_expiry_date) : undefined,
     hardExpiryDate: slot.hard_expiry_date ? formatDate(slot.hard_expiry_date) : undefined,
@@ -330,16 +349,16 @@ export function mapPlan(dto: PlanDto): Plan | null {
       summary: strings.cropSubtitle(seasonCrop.category, seasonCrop.cropYield),
       note: season.note,
       dateSpan: sowingDate && harvestDate ? `${sowingDate} → ${harvestDate}` : undefined,
-      harvestWindow: season.harvestWindow,
-      family: season.family,
-      growthDays: season.growthDays,
-      stages: mapStages(season.stages),
+      harvestWindow: formatHarvestWindow(season.harvestWindow),
+      family: season.family ?? undefined,
+      growthDays: season.growthDays ?? undefined,
+      stages: mapStages(season.stages ?? undefined),
       turnaroundBufferDays: season.turnaroundBufferDays ?? undefined,
-      delaySlackDays: season.delaySlackDays,
+      delaySlackDays: season.delaySlackDays ?? undefined,
       safeExpiryDate: season.safeExpiryDate ? formatDate(season.safeExpiryDate) : undefined,
       hardExpiryDate: season.hardExpiryDate ? formatDate(season.hardExpiryDate) : undefined,
       collisionProbabilityPct: season.collisionProbabilityPct ?? undefined,
-      kcMax: season.kcMax,
+      kcMax: season.kcMax ?? undefined,
     };
   });
 

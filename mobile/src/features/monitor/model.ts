@@ -42,9 +42,9 @@ export const boundaryUvPointSchema = z.object({
 
 export const terrainMeshSchema = z.object({
   grid_size: z.number(),
-  span_km_x: z.number(),
-  span_km_y: z.number(),
-  area_km2: z.number(),
+  span_km_x: z.number().optional(),
+  span_km_y: z.number().optional(),
+  area_km2: z.number().optional(),
   elevation_m: z.number(),
   elevation_min_m: z.number().optional(),
   elevation_max_m: z.number().optional(),
@@ -121,7 +121,7 @@ export const slab3dSchema = z.object({
     ndvi_current: z.number(),
     is_bare_soil: z.boolean().optional(),
     ecostress_thermal_stress_delta_c: z.number().optional(),
-    overpasses: z.array(z.unknown()).optional(),
+    overpasses: z.unknown().optional(),
   }).passthrough(),
   terrain_3d_mesh: terrainMeshSchema,
   soil_3d_horizons: z.array(soilHorizonSchema),
@@ -151,6 +151,17 @@ export const monitorResponseSchema = z.object({
   }),
 });
 
+const overpassItemSchema = z.object({
+  sensor: z.string().optional(),
+  platform: z.string().optional(),
+  mission: z.string().optional(),
+  acquisition_date: z.string().optional(),
+  next_overpass_utc: z.string().optional(),
+  revisit_days: z.number().optional(),
+  cloud_cover_pct: z.number().nullable().optional(),
+  status: z.string().optional(),
+}).passthrough();
+
 export const satelliteResponseSchema = z.object({
   location: z.object({
     latitude: z.number(),
@@ -163,15 +174,12 @@ export const satelliteResponseSchema = z.object({
     description: z.string().optional(),
     source: z.string().optional(),
   }).passthrough()).default([]),
-  overpass_schedule: z.array(z.object({
-    sensor: z.string().optional(),
-    platform: z.string().optional(),
-    mission: z.string().optional(),
-    next_overpass_utc: z.string().optional(),
-    revisit_days: z.number().optional(),
-    cloud_cover_pct: z.number().nullable().optional(),
-    status: z.string().optional(),
-  }).passthrough()).default([]),
+  overpass_schedule: z.union([
+    z.array(overpassItemSchema),
+    z.object({
+      acquisitions: z.array(overpassItemSchema).default([]),
+    }).passthrough(),
+  ]).optional(),
 });
 
 export const climatologyPointSchema = z.object({
@@ -241,9 +249,13 @@ export type SatelliteOverpassItem = {
 };
 
 export function mapSatelliteResponse(dto: SatelliteResponseDto) {
-  const overpasses: SatelliteOverpassItem[] = dto.overpass_schedule.map((item, idx) => {
+  const rawList = Array.isArray(dto.overpass_schedule)
+    ? dto.overpass_schedule
+    : (dto.overpass_schedule?.acquisitions ?? []);
+  const overpasses: SatelliteOverpassItem[] = rawList.map((item, idx) => {
     const sensor = String(item.sensor ?? item.mission ?? item.platform ?? `Satellite ${idx + 1}`);
-    const nextUtc = item.next_overpass_utc ? formatDate(item.next_overpass_utc.slice(0, 10)) : 'Scheduled';
+    const rawDate = item.next_overpass_utc ?? item.acquisition_date;
+    const nextUtc = rawDate ? formatDate(rawDate.slice(0, 10)) : 'Scheduled';
     const parts: string[] = [];
     if (item.revisit_days != null) parts.push(`${item.revisit_days}d revisit`);
     if (item.cloud_cover_pct != null) parts.push(`${formatNumber(item.cloud_cover_pct, 0)}% cloud`);

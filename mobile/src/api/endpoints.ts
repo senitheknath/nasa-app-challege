@@ -39,6 +39,11 @@ type RawAutofillResponse = {
     mean_temperature_c?: { value?: number | null };
     temperature_c?: { value?: number | null };
     wetness?: { value?: string | null };
+    climate?: {
+      seasonal_rainfall_mm?: number | null;
+      temperature_mean_c?: number | null;
+      root_zone_wetness?: number | null;
+    };
   };
 };
 
@@ -52,8 +57,12 @@ type RawCropsResponse = {
     crop_name?: string;
     common_name?: string;
     name?: string;
+    scientific_name?: string;
     category?: string;
+    group_name?: string;
+    life_cycle?: string | null;
     family?: string;
+    support_level?: string;
     yield_tonnes_per_ha?: number;
     yieldTonnesPerHectare?: number;
     water_percent?: number;
@@ -62,6 +71,7 @@ type RawCropsResponse = {
     cycle_days_min?: number;
     cycle_days_max?: number;
     suitability?: string;
+    reason?: string;
   }[];
 };
 
@@ -97,11 +107,11 @@ type RawRotationsResponse = {
         window?: string;
         sowing_date: string;
         harvest_nominal_date: string;
-        harvest_window?: string;
+        harvest_window?: string | { early_maturity?: string; nominal_maturity?: string; late_maturity?: string } | null;
         growth_cycle_days?: { minimum: number; nominal: number; maximum: number };
         stages?: { stage: string; description?: string; start_date: string; end_date: string; duration_days: number }[];
-        kc_max?: number;
-        delay_slack_days?: number;
+        kc_max?: number | null;
+        delay_slack_days?: number | null;
         turnaround_buffer_after_days?: number | null;
         safe_expiry_date?: string | null;
         hard_expiry_date?: string | null;
@@ -159,6 +169,25 @@ function computeGeodesicMetrics(boundary?: readonly GeoPoint[]): { hectares: num
   return { hectares: Number(hectares.toFixed(2)), perimeterKm: Number(perimeterKm.toFixed(2)) };
 }
 
+function parseExactLocationQuery(raw: string): { latitude: number; longitude: number; detail: string } | null {
+  if (!raw) return null;
+  // Support Google Maps URLs (@lat,lon or ?q=lat,lon or ll=lat,lon), geo:lat,lon, or plain "lat, lon" / "lat lon"
+  const atMatch = /@(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/.exec(raw);
+  const qMatch = /[?&](?:q|ll|center)=(-?\d+(?:\.\d+)?)\s*(?:,|%2C|\s)\s*(-?\d+(?:\.\d+)?)/i.exec(raw);
+  const plainMatch = /^(?:geo:)?\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/i.exec(raw);
+  const match = atMatch ?? qMatch ?? plainMatch;
+  if (!match) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return {
+    latitude,
+    longitude,
+    detail: atMatch || qMatch ? 'Google Maps pin' : 'Exact coordinates',
+  };
+}
+
 export const endpoints = {
   countries: async (signal: AbortSignal) => {
     const [presets, status] = await Promise.all([
@@ -190,12 +219,15 @@ export const endpoints = {
       };
     });
 
+    const calibratedCountries = new Set(coordByCountry.keys());
+
     return countryDataSchema.parse({
       defaultCountryId,
       currentSeason: 'Continuous',
+      countryCount: calibratedCountries.size || rawCountries.length,
       cropCount: Number(status.total_crops ?? 107),
       seasonCount: presets.categories?.length || 1,
-      defaultStrategyId: 'continuous_rainfed',
+      defaultStrategyId: 'standing',
       defaultCropId: 'rice',
       countries: rawCountries,
     });
@@ -228,31 +260,83 @@ export const endpoints = {
   },
 
   places: async (country: string, q: string, signal: AbortSignal) => {
+    const trimmed = q.trim();
+    const exactMatch = parseExactLocationQuery(trimmed);
+    const items: { id: string; name: string; latitude?: number; longitude?: number; detail?: string }[] = [];
+
+    if (exactMatch) {
+      items.push({
+        id: `exact:${exactMatch.latitude},${exactMatch.longitude}`,
+        name: `${exactMatch.latitude.toFixed(5)}, ${exactMatch.longitude.toFixed(5)}`,
+        latitude: exactMatch.latitude,
+        longitude: exactMatch.longitude,
+        detail: exactMatch.detail,
+      });
+    }
+
     const res = (await rawRequest({
       path: '/api/earth-data/places',
-      query: { country, q: q.trim() || undefined },
+      query: { country, q: trimmed || undefined },
       signal,
     })) as RawPlacesResponse;
 
-    if (q.trim().length < 2) {
-      const regions = (res.regions ?? []).map((r) => ({
+    const norm = (s: string) => s.toLocaleLowerCase().replace(/\s+/g, '');
+    const normQ = norm(trimmed);
+
+    const regionMatches = (res.regions ?? [])
+      .map((r) => ({
         id: String(r.id ?? r.name ?? ''),
         name: String(r.name ?? ''),
         latitude: Number(r.lat ?? r.latitude),
         longitude: Number(r.lon ?? r.longitude),
         detail: res.map_view?.country_name,
-      })).filter((r) => r.id && r.name);
-      return placesSchema.parse(regions);
+      }))
+      .filter((r) => r.id && r.name && (!normQ || norm(r.name).includes(normQ) || norm(r.detail ?? '').includes(normQ)));
+
+    if (trimmed.length < 2) {
+      return placesSchema.parse([...items, ...regionMatches]);
     }
 
-    const results = (res.results ?? []).map((r) => ({
-      id: String(r.id ?? r.name ?? ''),
-      name: String(r.name ?? ''),
-      latitude: r.latitude,
-      longitude: r.longitude,
-      detail: [r.admin1, r.country].filter(Boolean).join(', ') || undefined,
-    })).filter((r) => r.id && r.name);
-    return placesSchema.parse(results);
+    const backendResults = (res.results ?? [])
+      .map((r) => ({
+        id: String(r.id ?? r.name ?? ''),
+        name: String(r.name ?? ''),
+        latitude: r.latitude,
+        longitude: r.longitude,
+        detail: [r.admin1, r.country].filter(Boolean).join(', ') || undefined,
+      }))
+      .filter((r) => r.id && r.name);
+
+    items.push(...backendResults, ...regionMatches.filter((rg) => !backendResults.some((br) => br.name === rg.name)));
+
+    // Fallback to OpenStreetMap Nominatim when backend GeoNames has no match (e.g. addresses, landmarks, or unspaced names)
+    if (items.length === 0 && trimmed.length >= 2) {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(trimmed)}`;
+        const nomRes = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+        if (nomRes.ok) {
+          const nomJson = (await nomRes.json()) as { place_id?: number; display_name?: string; lat?: string; lon?: string }[];
+          for (const row of nomJson) {
+            const lat = Number(row.lat);
+            const lon = Number(row.lon);
+            if (Number.isFinite(lat) && Number.isFinite(lon) && row.display_name) {
+              const parts = row.display_name.split(',').map((p) => p.trim());
+              items.push({
+                id: `nom:${row.place_id ?? `${lat},${lon}`}`,
+                name: parts[0] || row.display_name,
+                latitude: lat,
+                longitude: lon,
+                detail: parts.slice(1, 4).join(', ') || undefined,
+              });
+            }
+          }
+        }
+      } catch {
+        // Ignore fallback network/abort errors; return whatever matches we already have
+      }
+    }
+
+    return placesSchema.parse(items);
   },
 
   measure: async (
@@ -285,8 +369,16 @@ export const endpoints = {
       perimeterKm,
       ph: res.autofill?.ph?.value ?? null,
       drainage: res.autofill?.drainage?.value ?? null,
-      annualRainfallMm: res.autofill?.annual_rainfall_mm?.value ?? res.autofill?.rainfall_mm?.value ?? null,
-      meanTemperatureC: res.autofill?.mean_temperature_c?.value ?? res.autofill?.temperature_c?.value ?? null,
+      annualRainfallMm:
+        res.autofill?.annual_rainfall_mm?.value ??
+        res.autofill?.rainfall_mm?.value ??
+        res.autofill?.climate?.seasonal_rainfall_mm ??
+        null,
+      meanTemperatureC:
+        res.autofill?.mean_temperature_c?.value ??
+        res.autofill?.temperature_c?.value ??
+        res.autofill?.climate?.temperature_mean_c ??
+        null,
       wetness: res.autofill?.wetness?.value ?? null,
       latitude: res.location?.latitude ?? body.latitude,
       longitude: res.location?.longitude ?? body.longitude,
@@ -297,56 +389,59 @@ export const endpoints = {
     await rawRequest({ path: '/api/system/presets', signal });
     return strategiesSchema.parse([
       {
-        id: 'continuous_rainfed',
-        tag: 'Rainfed',
-        title: 'Continuous Rotation (Rainfed)',
-        description: 'Season-free continuous multi-crop chaining driven by local rainfall and turnaround buffers.',
-        requiresCrop: true,
-      },
-      {
-        id: 'continuous_irrigated',
-        tag: 'Irrigated',
-        title: 'Continuous Rotation (Irrigated)',
-        description: 'Year-round irrigated crop sequence optimization with dynamic harvest-to-sowing transitions.',
-        requiresCrop: true,
-      },
-      {
-        id: 'standing_rainfed',
-        tag: 'Standing · Rainfed',
-        title: 'Standing Crop (Rainfed)',
-        description: 'Start from an active rainfed crop and plan the optimal follow-up transition.',
-        requiresCrop: true,
-      },
-      {
-        id: 'standing_irrigated',
-        tag: 'Standing · Irrigated',
-        title: 'Standing Crop (Irrigated)',
-        description: 'Start from an active irrigated crop and schedule the next high-compatibility rotation.',
-        requiresCrop: true,
-      },
-      {
-        id: 'fallow_rainfed',
+        id: 'fallow',
         tag: 'Fallow',
-        title: 'Bare / Fallow Field',
-        description: 'Field is currently resting; recommend the best opening crop and follow-up sequence.',
+        title: 'No rotation',
+        description: 'Newly cleared land',
         requiresCrop: false,
+      },
+      {
+        id: 'standing',
+        tag: 'Standing',
+        title: 'Current crop',
+        description: 'Already planted',
+        requiresCrop: true,
       },
     ]);
   },
 
-  categories: async (_country: string, signal: AbortSignal) => {
-    const res = (await rawRequest({ path: '/api/knowledge/categories', signal })) as { categories?: string[] };
+  categories: async (
+    country: string,
+    signal: AbortSignal,
+    region?: { latitude?: number; longitude?: number; sowingDate?: string },
+  ) => {
+    const res = (await rawRequest({
+      path: '/api/knowledge/categories',
+      query: {
+        country: country || undefined,
+        latitude: region?.latitude,
+        longitude: region?.longitude,
+        start_date: region?.sowingDate || undefined,
+      },
+      signal,
+    })) as { categories?: string[] };
     return categoriesSchema.parse(
       (res.categories ?? []).map((cat) => ({ id: cat, label: cat })),
     );
   },
 
-  crops: async (_country: string, q: string, category: string, cursor: string | undefined, signal: AbortSignal) => {
+  crops: async (
+    country: string,
+    q: string,
+    category: string,
+    cursor: string | undefined,
+    signal: AbortSignal,
+    region?: { latitude?: number; longitude?: number; sowingDate?: string },
+  ) => {
     const offset = Number(cursor) || 0;
     const limit = 20;
     const res = (await rawRequest({
       path: '/api/knowledge/crops',
       query: {
+        country: country || undefined,
+        latitude: region?.latitude,
+        longitude: region?.longitude,
+        start_date: region?.sowingDate || undefined,
         q: q.trim() || undefined,
         category: category || undefined,
         limit,
@@ -358,7 +453,7 @@ export const endpoints = {
     const rawItems = res.items ?? [];
     const total = Number(res.total ?? rawItems.length);
     const items = rawItems.map((item) => {
-      const cat = item.category || 'General';
+      const cat = item.category || item.group_name || 'General';
       const growthDays = item.growth_days
         ? String(item.growth_days)
         : (item.cycle_days_min && item.cycle_days_max ? `${item.cycle_days_min}-${item.cycle_days_max}d` : undefined);
@@ -366,11 +461,15 @@ export const endpoints = {
         id: String(item.crop_id ?? item.id ?? ''),
         name: String(item.crop_name ?? item.common_name ?? item.name ?? ''),
         category: { id: cat, label: cat },
-        yieldTonnesPerHectare: Number(item.yield_tonnes_per_ha ?? item.yieldTonnesPerHectare ?? 4.5),
-        waterPercent: Number(item.water_percent ?? item.waterPercent ?? 55),
+        yieldTonnesPerHectare: Number(item.yield_tonnes_per_ha ?? item.yieldTonnesPerHectare ?? 0),
+        waterPercent: Number(item.water_percent ?? item.waterPercent ?? 50),
+        scientificName: item.scientific_name,
         family: item.family,
+        lifeCycle: item.life_cycle ?? undefined,
         growthDays,
         suitability: item.suitability,
+        reason: item.reason,
+        supportLevel: item.support_level,
       };
     });
 
@@ -402,7 +501,7 @@ export const endpoints = {
         area_ha: body.areaHa ?? undefined,
         start_date: body.sowingDate,
         irrigation,
-        candidate_crop_ids: body.cropId ? [body.cropId] : undefined,
+        current: body.cropId ?? undefined,
         max_sequences: 12,
       },
       signal,
@@ -440,11 +539,11 @@ export const endpoints = {
         : undefined,
       stages: slot.stages,
       turnaroundBufferDays: slot.turnaround_buffer_after_days ?? undefined,
-      delaySlackDays: slot.delay_slack_days,
+      delaySlackDays: slot.delay_slack_days ?? undefined,
       safeExpiryDate: slot.safe_expiry_date ?? undefined,
       hardExpiryDate: slot.hard_expiry_date ?? undefined,
       collisionProbabilityPct: slot.collision_probability_pct ?? undefined,
-      kcMax: slot.kc_max,
+      kcMax: slot.kc_max ?? undefined,
     }));
 
     return planSchema.parse({
