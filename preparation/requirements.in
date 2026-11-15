@@ -1,0 +1,8 @@
+# Learning environment only. Freeze resolved versions after installation.
+streamlit
+pandas
+numpy
+plotly
+requests
+pytest
+pycountry
