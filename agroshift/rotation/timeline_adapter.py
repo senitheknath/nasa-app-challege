@@ -59,9 +59,11 @@ def quantize_crop_to_activity(
 
     start_offset = (s_date - base_jan1).days
     window_len = (e_date - s_date).days
-    latest_start = start_offset + max(0, min(28, int(window_len * 0.25)))
-
     d_min, d_nom, d_max = _cycle_bounds_from_profile(profile)
+    if window_len > d_min:
+        latest_start = start_offset + max(14, min(window_len - d_min, int(window_len * 0.45)))
+    else:
+        latest_start = start_offset + 14
     phase_fracs = _fao_stage_fractions_from_profile(profile)
 
     status = card.get("status", "unknown")
@@ -98,8 +100,9 @@ def build_physical_timeline(
     """Translate a mathematical Trajectory into physical calendar milestones and delay buffers."""
     base_jan1 = date(ref_year, 1, 1)
     slots_output: list[dict[str, Any]] = []
+    traj_slots = trajectory.slots
 
-    for slot in trajectory.slots:
+    for idx, slot in enumerate(traj_slots):
         p = slot.payload
         profile: CropProfile = p["profile"]
 
@@ -107,6 +110,38 @@ def build_physical_timeline(
         harvest_nominal = base_jan1 + timedelta(days=slot.end_t_nominal)
         harvest_early = base_jan1 + timedelta(days=slot.end_t_min)
         harvest_late = base_jan1 + timedelta(days=slot.end_t_max)
+
+        d_nom = slot.end_t_nominal - slot.start_t
+        d_max = slot.end_t_max - slot.start_t
+
+        if idx + 1 < len(traj_slots):
+            nxt_slot = traj_slots[idx + 1]
+            nxt_latest = (
+                nxt_slot.latest_start
+                if nxt_slot.latest_start is not None
+                else nxt_slot.start_t + nxt_slot.delay_slack
+            )
+            min_buf = slot.min_buffer_after
+            safe_expiry_t = nxt_latest - min_buf - d_max
+            hard_expiry_t = nxt_latest - min_buf - d_nom
+            deadline_t = nxt_latest - min_buf
+            if slot.end_t_max <= deadline_t:
+                collision_prob = 0.0
+            elif slot.end_t_min > deadline_t:
+                collision_prob = 100.0
+            else:
+                span = max(1, slot.end_t_max - slot.end_t_min)
+                collision_prob = round(max(0.0, min(100.0, ((slot.end_t_max - deadline_t) / span) * 100.0)), 1)
+        else:
+            own_latest = slot.latest_start if slot.latest_start is not None else slot.start_t + slot.delay_slack
+            hard_expiry_t = own_latest
+            safe_expiry_t = own_latest - max(0, d_max - d_nom)
+            collision_prob = 0.0
+
+        safe_expiry_date = (base_jan1 + timedelta(days=safe_expiry_t)).isoformat()
+        hard_expiry_date = (base_jan1 + timedelta(days=hard_expiry_t)).isoformat()
+        days_until_safe_expiry = safe_expiry_t - slot.start_t
+        days_until_hard_expiry = hard_expiry_t - slot.start_t
 
         stage_labels = [
             ("initial_emergence", "Emergence & Root Establishment"),
@@ -142,13 +177,24 @@ def build_physical_timeline(
                 },
                 "growth_cycle_days": {
                     "minimum": slot.end_t_min - slot.start_t,
-                    "nominal": slot.end_t_nominal - slot.start_t,
-                    "maximum": slot.end_t_max - slot.start_t,
+                    "nominal": d_nom,
+                    "maximum": d_max,
                 },
                 "stages": stages,
                 "kc_max": profile.kc_max,
                 "delay_slack_days": slot.delay_slack,
                 "turnaround_buffer_after_days": slot.turnaround_buffer_after,
+                "safe_expiry_date": safe_expiry_date,
+                "hard_expiry_date": hard_expiry_date,
+                "days_until_safe_expiry": days_until_safe_expiry,
+                "days_until_hard_expiry": days_until_hard_expiry,
+                "collision_probability_pct": collision_prob,
+                "uncertainty_cone": {
+                    "early_end_date": harvest_early.isoformat(),
+                    "nominal_end_date": harvest_nominal.isoformat(),
+                    "late_end_date": harvest_late.isoformat(),
+                    "span_days": slot.end_t_max - slot.end_t_min,
+                },
             }
         )
 
@@ -167,10 +213,21 @@ def build_physical_timeline(
         buf_status = "excessive_fallow"
         buf_desc = f"{buffer_days}-day gap leaves soil bare; consider a short cover crop to prevent erosion."
 
+    first_slot = slots_output[0] if slots_output else {}
     return {
         "overall_status": trajectory.status,
         "feasible": trajectory.feasible,
         "total_agronomic_score": trajectory.total_score,
+        "safe_expiry_date": first_slot.get("safe_expiry_date"),
+        "hard_expiry_date": first_slot.get("hard_expiry_date"),
+        "days_until_safe_expiry": first_slot.get("days_until_safe_expiry", 0),
+        "days_until_hard_expiry": first_slot.get("days_until_hard_expiry", 0),
+        "collision_probability_pct": first_slot.get("collision_probability_pct", 0.0),
+        "uncertainty_cone": {
+            "slot_1_span_days": first_slot.get("uncertainty_cone", {}).get("span_days", 0),
+            "slot_2_span_days": slots_output[1].get("uncertainty_cone", {}).get("span_days", 0) if len(slots_output) > 1 else 0,
+            "collision_probability_pct": first_slot.get("collision_probability_pct", 0.0),
+        },
         "turnaround_summary": {
             "buffer_days": buffer_days,
             "status": buf_status,

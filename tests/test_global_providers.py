@@ -13,9 +13,10 @@ from agroshift.power import DataError
 
 
 @pytest.fixture(autouse=True)
-def cold_cache():
+def cold_cache(monkeypatch):
     http._cache.clear()
     http._cooldown.clear()
+    monkeypatch.setattr(http, "DB_CACHE_PATH", None)
     yield
     http._cache.clear()
     http._cooldown.clear()
@@ -115,3 +116,37 @@ def test_geocoding_retries_transient_failure_and_excludes_wrong_country(monkeypa
     assert search_places("Fixture village", "KE") == []
     assert request.call_count == 2
     assert search_places("Fixture village", "KE") == [] and request.call_count == 2
+
+
+def test_reference_persists_live_fetch_to_sqlite_and_reads_from_db(tmp_path, monkeypatch):
+    db_file = tmp_path / "geo_cache.db"
+    monkeypatch.setattr(http, "DB_CACHE_PATH", db_file)
+    url = "https://example.invalid/lazy-db"
+    remote = Mock(return_value=(b'{"ph": 6.2}', "2026-11-14T12:00:00+00:00"))
+    monkeypatch.setattr(http, "_load_remote", remote)
+
+    # First call: misses L1, L2 DB, and archive -> fetches live and writes to DB
+    first = http.reference(url, {"lat": 1}, json.loads, kind="modelled", detail="test")
+    assert (first["value"], first["access"], remote.call_count) == ({"ph": 6.2}, "live", 1)
+
+    # Clear L1 memory cache; second call must hit SQLite DB without calling _load_remote
+    http._cache.clear()
+    second = http.reference(url, {"lat": 1}, json.loads, kind="modelled", detail="test")
+    assert (second["value"], second["access"], remote.call_count) == ({"ph": 6.2}, "cache", 1)
+
+    # Offline call also serves from SQLite DB
+    http._cache.clear()
+    third = http.reference(url, {"lat": 1}, json.loads, kind="modelled", detail="test", offline=True)
+    assert (third["value"], third["access"], remote.call_count) == ({"ph": 6.2}, "cache", 1)
+
+
+def test_mato_grosso_brazil_preset_matches_archived_history():
+    from datetime import date
+    from agroshift.presets import LOCATION_PRESETS
+    from agroshift.science.climate.power import archived_history, request_parameters
+
+    preset = LOCATION_PRESETS["mato_grosso_brazil"]
+    query = request_parameters(preset["latitude"], preset["longitude"], date(2001, 1, 1), date(2025, 12, 31))
+    ds = archived_history(query)
+    assert ds is not None
+    assert ds.provenance.get("data_kind") == "VERIFIED_CACHE"

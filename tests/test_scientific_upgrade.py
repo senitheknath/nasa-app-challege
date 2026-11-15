@@ -391,3 +391,54 @@ def test_validation_ablation_aquacrop_prototype_and_refresh_governance():
     assert gov["nasa_station_archives"]["verified_stations"] == 34
 
 
+def test_multi_satellite_fusion_mathematical_proofs():
+    from agroshift.monitoring import (
+        build_3d_field_slab,
+        compute_layer_update_frequencies,
+        downscale_moisture_to_parcel_grid,
+        fuse_inverse_variance,
+        fuse_soil_wetness_3way,
+    )
+
+    # Proof 1: Inverse-variance sensor fusion strictly reduces estimation error
+    fused_iv = fuse_inverse_variance([(24.0, 4.5), (26.0, 5.0), (22.0, 6.0)])
+    assert fused_iv["fused_sigma"] < fused_iv["min_input_sigma"]
+    assert abs(fused_iv["fused_sigma"] - 2.92) < 0.05
+    assert fused_iv["variance_reduction_pct"] > 50.0
+
+    fused_3way = fuse_soil_wetness_3way(24.0, 26.0, 22.0)
+    assert fused_3way["fused_sigma"] < fused_3way["min_input_sigma"]
+    assert abs(fused_3way["fused_sigma"] - 2.92) < 0.05
+    assert fused_3way["sensor_count"] == 3
+
+    # Proof 2: Multi-constellation harmonic cadence eliminates monsoon cloud blindness
+    monsoon_freq = compute_layer_update_frequencies(cloud_cover_pct=80.0)
+    assert monsoon_freq["combined_parcel_dt_days"] <= 4.5
+    assert monsoon_freq["layers"]["sentinel1_sar"]["cloud_piercing"] is True
+    assert "sentinel2_l2a" in monsoon_freq["layers"]
+    assert "landsat_8_9" in monsoon_freq["layers"]
+
+    clear_freq = compute_layer_update_frequencies(cloud_cover_pct=22.0)
+    assert clear_freq["combined_parcel_dt_days"] < monsoon_freq["combined_parcel_dt_days"]
+
+    # Proof 3 & 4: Mass-conserving topographic-spectral downscaling & 3D field slab integration
+    coarse_moisture = 28.4
+    wetness_grid = [0.20, 0.35, 0.50, 0.65, 0.80]
+    twi_grid = [5.1, 6.4, 7.2, 8.5, 9.8]
+    downscaled = downscale_moisture_to_parcel_grid(coarse_moisture, wetness_grid, twi_grid)
+    assert len(downscaled) == len(wetness_grid)
+    assert abs(sum(downscaled) / len(downscaled) - coarse_moisture) < 0.05
+
+    slab = build_3d_field_slab(8.3140, 80.4242, "LK", offline=True)
+    assert "sensor_fusion" in slab
+    sf = slab["sensor_fusion"]
+    assert sf["moisture_fusion_3way"]["fused_sigma"] < sf["moisture_fusion_3way"]["min_input_sigma"]
+    assert sf["combined_parcel_dt_days"] is not None
+    assert "dem_tier" in slab["terrain_3d_mesh"]
+
+    verts = slab["terrain_3d_mesh"]["vertices"]
+    assert len(verts) == 25
+    assert all("twi" in v and "s1_s2_wetness_idx" in v and "downscaled_moisture_pct" in v for v in verts)
+
+
+

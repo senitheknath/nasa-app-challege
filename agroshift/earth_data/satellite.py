@@ -16,7 +16,10 @@ import urllib.request
 from agroshift.config import load_platform_config
 from agroshift.earth_data.cache import get_cached, set_cached
 from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
+from agroshift.monitoring.processors import compute_layer_update_frequencies
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
+CDSE_STAC_URL = "https://stac.dataspace.copernicus.eu/v1/search"
+EARTH_SEARCH_STAC_URL = "https://earth-search.aws.element84.com/v1/search"
 GIBS_WMTS_BASE = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"
 
 
@@ -112,6 +115,91 @@ def get_active_monitoring_layers(
     return all_layers
 
 
+def _extract_stac_browse_url(feature: dict[str, Any]) -> str | None:
+    """Extract a thumbnail or preview URL from a STAC Item's assets or links."""
+    assets = feature.get("assets")
+    if isinstance(assets, dict):
+        for key in ("thumbnail", "overview", "rendered_preview"):
+            asset = assets.get(key)
+            if isinstance(asset, dict) and asset.get("href"):
+                return str(asset["href"])
+    links = feature.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if (
+                isinstance(link, dict)
+                and str(link.get("rel", "")).lower() in {"thumbnail", "preview"}
+                and link.get("href")
+            ):
+                return str(link["href"])
+    return None
+
+
+def _query_stac_collection(
+    stac_url: str,
+    coll_id: str,
+    sensor_id: str,
+    sensor_label: str,
+    sensor_role: str,
+    recurrence: str,
+    bbox_coords: list[float],
+    limit_per_sensor: int,
+) -> list[dict[str, Any]]:
+    """Query a STAC /search endpoint for a single collection and normalize matching items."""
+    payload = json.dumps(
+        {
+            "collections": [coll_id],
+            "bbox": bbox_coords,
+            "limit": limit_per_sensor,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        stac_url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/geo+json, application/json",
+            "User-Agent": "AgroShift-SatelliteMonitor/1.0",
+        },
+        method="POST",
+    )
+    items: list[dict[str, Any]] = []
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(data, dict):
+            return items
+        features = data.get("features")
+        if not isinstance(features, list):
+            return items
+        for feature in features:
+            if (
+                not isinstance(feature, dict)
+                or not feature.get("id")
+                or not isinstance(feature.get("properties"), dict)
+            ):
+                continue
+            props = feature["properties"]
+            acquired_at = props.get("datetime") or props.get("start_datetime") or ""
+            cloud_cover = props.get("eo:cloud_cover")
+            items.append(
+                {
+                    "sensor": sensor_id,
+                    "label": sensor_label,
+                    "role": sensor_role,
+                    "recurrence": recurrence,
+                    "granule_id": str(feature["id"]),
+                    "acquired_at": str(acquired_at),
+                    "cloud_cover_pct": float(cloud_cover) if cloud_cover is not None else None,
+                    "browse_url": _extract_stac_browse_url(feature),
+                    "status": "available",
+                }
+            )
+    except Exception:
+        return []
+    return items
+
+
 def fetch_satellite_overpasses(
     latitude: float,
     longitude: float,
@@ -122,7 +210,7 @@ def fetch_satellite_overpasses(
     offline: bool = False,
     limit_per_sensor: int = 2,
 ) -> dict[str, Any]:
-    """Query NASA CMR for Earth observation scenes using config-driven precision (full_polygon or bbox)."""
+    """Query multi-provider STAC (CDSE + Earth-Search) and NASA CMR for Earth observation scenes."""
     geom = resolve_geometry(
         "satellite_cmr",
         latitude,
@@ -134,7 +222,59 @@ def fetch_satellite_overpasses(
     cache_type = f"satellite_overpass:{geom['cache_suffix']}"
     cached = get_cached(cache_type, latitude, longitude)
     if cached and not offline:
-        return cached["data"]
+        data = dict(cached["data"])
+        if "layer_update_frequencies" not in data:
+            clouds = [
+                a["cloud_cover_pct"]
+                for a in data.get("acquisitions", [])
+                if a.get("cloud_cover_pct") is not None
+            ]
+            avg_cloud = sum(clouds) / len(clouds) if clouds else 22.0
+            data["layer_update_frequencies"] = compute_layer_update_frequencies(cloud_cover_pct=avg_cloud)
+        return data
+
+    stac_sensors = [
+        (
+            CDSE_STAC_URL,
+            "sentinel-2-l2a",
+            "SENTINEL2_L2A",
+            "Copernicus Sentinel-2 L2A (10 m)",
+            "surface_reflectance_ndvi",
+            "5 days",
+        ),
+        (
+            CDSE_STAC_URL,
+            "sentinel-1-grd",
+            "SENTINEL1_GRD",
+            "Copernicus Sentinel-1 C-Band SAR (10 m)",
+            "cloud_piercing_radar_wetness",
+            "6 days",
+        ),
+        (
+            CDSE_STAC_URL,
+            "sentinel-3-slstr-2-lst-nrt",
+            "SENTINEL3_SLSTR",
+            "Copernicus Sentinel-3 SLSTR Thermal (1 km)",
+            "daily_regional_thermal_lst",
+            "1 day",
+        ),
+        (
+            EARTH_SEARCH_STAC_URL,
+            "landsat-c2-l2",
+            "LANDSAT_C2_L2",
+            "Landsat 8/9 C2 L2 Optical+Thermal (30m/100m)",
+            "surface_reflectance_and_thermal",
+            "8 days",
+        ),
+        (
+            EARTH_SEARCH_STAC_URL,
+            "cop-dem-glo-30",
+            "COP_DEM_GLO30",
+            "Copernicus DEM GLO-30 (30 m)",
+            "terrain_3d_elevation",
+            "static",
+        ),
+    ]
 
     sensors = [
         ("HLSL30", "Harmonized Landsat Sentinel-2 (30 m)", "surface_reflectance_ndvi", "2–3 days"),
@@ -147,6 +287,26 @@ def fetch_satellite_overpasses(
     acquisitions: list[dict[str, Any]] = []
 
     if not offline:
+        try:
+            bbox_coords = [float(part.strip()) for part in bbox_str.split(",")]
+        except ValueError:
+            bbox_coords = []
+
+        if len(bbox_coords) == 4:
+            for stac_url, coll_id, sensor_id, sensor_label, sensor_role, recurrence in stac_sensors:
+                acquisitions.extend(
+                    _query_stac_collection(
+                        stac_url,
+                        coll_id,
+                        sensor_id,
+                        sensor_label,
+                        sensor_role,
+                        recurrence,
+                        bbox_coords,
+                        limit_per_sensor,
+                    )
+                )
+
         for short_name, sensor_label, sensor_role, recurrence in sensors:
             params: dict[str, str] = {
                 "short_name": short_name,
@@ -167,6 +327,16 @@ def fetch_satellite_overpasses(
                         title = entry.get("title", "")
                         start_time = entry.get("time_start", "")
                         cloud_cover = entry.get("cloud_cover")
+                        browse_url = next(
+                            (
+                                link.get("href")
+                                for link in (entry.get("links") or [])
+                                if isinstance(link, dict)
+                                and "browse" in str(link.get("rel", "")).lower()
+                                and link.get("href")
+                            ),
+                            None,
+                        )
                         acquisitions.append(
                             {
                                 "sensor": short_name,
@@ -176,46 +346,30 @@ def fetch_satellite_overpasses(
                                 "granule_id": title,
                                 "acquired_at": start_time,
                                 "cloud_cover_pct": float(cloud_cover) if cloud_cover is not None else None,
+                                "browse_url": browse_url,
                                 "status": "available",
                             }
                         )
             except Exception:
                 continue
 
-    # Fallback if offline or CMR had no response
-    if not acquisitions:
-        acquisitions = [
-            {
-                "sensor": "HLSL30",
-                "label": "Harmonized Landsat Sentinel-2 (30 m)",
-                "role": "surface_reflectance_ndvi",
-                "recurrence": "2–3 days",
-                "granule_id": f"HLS.L30.T{int(latitude)}_{int(longitude)}.offline_archive",
-                "acquired_at": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
-                "cloud_cover_pct": 5.0,
-                "status": "offline_reference",
-            },
-            {
-                "sensor": "SPL3SMP_E",
-                "label": "SMAP Enhanced Soil Moisture (9 km)",
-                "role": "root_zone_wetness",
-                "recurrence": "1–2 days",
-                "granule_id": f"SMAP_L3_SM_P_E_{int(latitude)}_{int(longitude)}.offline_archive",
-                "acquired_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
-                "cloud_cover_pct": None,
-                "status": "offline_reference",
-            },
-        ]
+    # Never fabricate synthetic granule IDs or cloud cover if offline or CMR is unreachable
+    cmr_status = "verified" if acquisitions else ("offline" if offline else "unavailable")
+    clouds = [a["cloud_cover_pct"] for a in acquisitions if a.get("cloud_cover_pct") is not None]
+    avg_cloud = sum(clouds) / len(clouds) if clouds else 22.0
 
     result = {
+        "status": cmr_status,
         "precision_mode": geom["active_mode"],
         "polygon_hash": geom["polygon_hash"],
         "bounding_box": bbox_str,
         "acquisitions_count": len(acquisitions),
         "acquisitions": acquisitions,
+        "layer_update_frequencies": compute_layer_update_frequencies(cloud_cover_pct=avg_cloud),
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Cache result under precision-aware key
-    set_cached(cache_type, latitude, longitude, result, source="nasa_cmr_api")
+    # Cache result under precision-aware key only when real acquisitions were retrieved
+    if acquisitions:
+        set_cached(cache_type, latitude, longitude, result, source="nasa_cmr_api")
     return result

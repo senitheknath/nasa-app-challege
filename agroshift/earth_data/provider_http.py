@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from agroshift.earth_data.cache import DEFAULT_DB_PATH, get_provider_cached, set_provider_cached
 from agroshift.science.climate.power import DataError
 
 _curr = Path(__file__).resolve()
@@ -24,6 +25,7 @@ while _curr != _curr.parent:
 else:
     ROOT = Path(__file__).resolve().parents[2]
 ARCHIVES = ROOT / "data" / "provider_samples"
+DB_CACHE_PATH: Path | None = DEFAULT_DB_PATH
 MAX_BYTES = 1_000_000
 _cache = OrderedDict()
 _locks = [threading.Lock() for _ in range(53)]
@@ -41,7 +43,7 @@ def _delay(value):
             return 60
 
 
-def get(url, params, *, stream=True, timeout=(3, 6)):
+def get(url, params, *, stream=True, timeout=(5, 15)):
     """Retry transient transport errors once; honour longer rate-limit windows."""
     host = urlsplit(url).netloc
     for attempt in range(2):
@@ -114,6 +116,14 @@ def save_archive(url, params, raw, retrieved):
     os.replace(temp, path)
 
 
+def _store_memory_cache(key: str, body: bytes, retrieved: str) -> None:
+    with _guard:
+        _cache[key] = (body, retrieved, time.monotonic() + 86400)
+        _cache.move_to_end(key)
+        while len(_cache) > 64:
+            _cache.popitem(last=False)
+
+
 def reference(url, params, parse, *, kind, detail, source=None, offline=False, record=False):
     base = {"kind": kind, "source": source or url, "detail": detail}
     key = request_key(url, params)
@@ -121,39 +131,56 @@ def reference(url, params, parse, *, kind, detail, source=None, offline=False, r
         with _guard:
             cached = _cache.get(key)
         error = "No saved record for this request."
-        if not offline and not record and cached and time.monotonic() < cached[2]:
+        raw = None
+        retrieved = None
+        access = None
+
+        # 1. L1 in-memory cache
+        if not record and cached and (offline or time.monotonic() < cached[2]):
             raw, retrieved, _ = cached
             access = "cache"
-        else:
-            raw = None
-            if not offline:
-                try:
-                    body, retrieved = _load_remote(url, params)
-                    value = parse(body)
-                    if record:
-                        save_archive(url, params, body, retrieved)
-                    with _guard:
-                        _cache[key] = (body, retrieved, time.monotonic() + 86400)
-                        _cache.move_to_end(key)
-                        while len(_cache) > 64:
-                            _cache.popitem(last=False)
-                    return dict(base, status="verified", value=value, retrieved_at=retrieved, access="live")
-                except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
-                    error = "Provider request or validation failed."
-                    if isinstance(exc, DataError):
-                        error = str(exc)
-            if cached:
-                raw, retrieved, _ = cached
+
+        # 2. L2 persistent SQLite DB cache (read-through)
+        if raw is None and not record and DB_CACHE_PATH is not None:
+            db_hit = get_provider_cached(
+                key,
+                max_age_seconds=None if offline else 30 * 86400,
+                db_path=DB_CACHE_PATH,
+            )
+            if db_hit is not None:
+                raw, retrieved = db_hit
                 access = "cache"
-            else:
-                try:
-                    raw, retrieved = _read_archive(_archive_path(key), key)
-                    access = "archive"
-                except (OSError, ValueError, KeyError, TypeError):
-                    pass
+                _store_memory_cache(key, raw, retrieved)
+
+        # 3. Bundled verified archive (data/provider_samples)
+        if raw is None and not record:
+            try:
+                raw, retrieved = _read_archive(_archive_path(key), key)
+                access = "archive"
+            except (OSError, ValueError, KeyError, TypeError):
+                raw = None
+
         if raw is not None:
             try:
                 return dict(base, status="verified", value=parse(raw), retrieved_at=retrieved, access=access)
             except (OSError, ValueError, KeyError, TypeError):
                 error = "Saved record could not be verified."
+                raw = None
+
+        # 4. Live remote source (only when not in DB/archive and not offline)
+        if not offline:
+            try:
+                body, retrieved = _load_remote(url, params)
+                value = parse(body)
+                if record:
+                    save_archive(url, params, body, retrieved)
+                _store_memory_cache(key, body, retrieved)
+                if DB_CACHE_PATH is not None:
+                    set_provider_cached(key, url, body, retrieved, db_path=DB_CACHE_PATH)
+                return dict(base, status="verified", value=value, retrieved_at=retrieved, access="live")
+            except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
+                error = "Provider request or validation failed."
+                if isinstance(exc, DataError):
+                    error = str(exc)
+
         return dict(base, status="unavailable", value=None, retrieved_at=None, access=None, detail=error)

@@ -111,7 +111,8 @@ def run_demo(lat: float, lon: float, country: str, boundary: dict | None, window
     print(f"\n  • Live NASA GIBS Map Overlay Endpoints:")
     for lyr in gibs_layers:
         print(f"    - {lyr['name']} ({lyr['resolution']}):")
-        print(f"      {lyr['tile_url'][:75]}...")
+        url_str = lyr.get("tile_url") or lyr.get("wms_url") or ""
+        print(f"      {url_str[:75]}...")
 
     # 3. Science-Enriched Crop Rotation Sequences
     print("\n[3] EVALUATING 2-SEASON ROTATION SEQUENCES (SCIENCE RULE ENGINE)...")

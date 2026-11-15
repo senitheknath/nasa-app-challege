@@ -270,9 +270,9 @@ LOCATION_PRESETS = {
         "default_season": "Kharif then Rabi (South Asia)",
     },
     "mato_grosso_brazil": {
-        "label": "🇧🇷 South America · Sinop / Sorriso (Mato Grosso), Brazil (-11.86°S, -55.51°W)",
-        "latitude": -11.8608,
-        "longitude": -55.5095,
+        "label": "🇧🇷 South America · Sorriso / Sinop (Mato Grosso), Brazil (-12.54°S, -55.72°W)",
+        "latitude": -12.5425,
+        "longitude": -55.7211,
         "country": "BR",
         "default_season": "Southern Wet then Dry",
     },
