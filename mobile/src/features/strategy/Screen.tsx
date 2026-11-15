@@ -1,0 +1,75 @@
+import { useMemo } from 'react';
+import { RefreshControl, StyleSheet, View } from 'react-native';
+import { useOffline, viewState } from '@/api/query';
+import { StrategyCard } from '@/components/cards';
+import { Feedback } from '@/components/feedback';
+import { Backdrop } from '@/components/FieldMap';
+import { Label, Surface } from '@/components/primitives';
+import { strings } from '@/i18n/strings';
+import { usePlanner } from '@/state/usePlanner';
+import { pictures } from '@/theme/images';
+import { colors, space } from '@/theme/tokens';
+import { tap } from '@/utils/haptics';
+import { useMeasurement } from '../area/hooks';
+import { useCountryData } from '../country/hooks';
+import { continueTo, FlowScreen, ScreenScroll } from '../planner/FlowScreen';
+import { useStrategies } from './hooks';
+
+export default function StrategyScreen() {
+  const countryId = usePlanner((draft) => draft.countryId);
+  const points = usePlanner((draft) => draft.points);
+  const closed = usePlanner((draft) => draft.closed);
+  const chosen = usePlanner((draft) => draft.strategyId);
+  const choose = usePlanner((draft) => draft.chooseStrategy);
+  const country = useCountryData();
+  const strategies = useStrategies(countryId);
+  const field = useMemo(() => closed ? { countryId, points } : null, [closed, countryId, points]);
+  const measurement = useMeasurement(field);
+  const selected = strategies.data?.find((item) => item.id === (chosen ?? country.data?.defaultStrategyId)) ?? strategies.data?.[0];
+  const offline = useOffline();
+  const state = viewState({
+    isPending: country.isPending || strategies.isPending || measurement.isPending,
+    isError: country.isError || strategies.isError || measurement.isError,
+    isPaused: country.isPaused || strategies.isPaused || measurement.isPaused,
+  }, offline, !!selected && !!measurement.data);
+  const refreshing = country.isRefetching || strategies.isRefetching || measurement.isRefetching;
+  const refresh = () => {
+    void country.refetch();
+    void strategies.refetch();
+    if (field) void measurement.refetch();
+  };
+
+  return (
+    <FlowScreen step={3} action={strings.next} disabled={state !== 'ready'} onNext={() => {
+      if (selected) {
+        choose(selected.id);
+        continueTo(selected.requiresCrop ? 4 : 5);
+      }
+    }}>
+      {(inset) => <>
+        <Backdrop image={pictures.field} kind="field" />
+        <ScreenScroll inset={inset} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} colors={[colors.accent]} />}>
+          <Feedback state={state} layout="strategy" onRetry={refresh}>
+            <Surface style={styles.summary}>
+              <View style={styles.area}>
+                <Label variant="label" tone="sage">{strings.yourField}</Label>
+                <Label variant="metric" tone="accent" style={styles.metric}>{measurement.data?.hectares} <Label variant="unit">{strings.units.hectares}</Label></Label>
+              </View>
+              <Label variant="caption" tone="sage">{strings.pickStatus}</Label>
+            </Surface>
+            {strategies.data?.map((item) => (
+              <StrategyCard key={item.id} selected={selected?.id === item.id} tag={item.tag} title={item.title} description={item.description}
+                onPress={() => { tap(); choose(item.id); }} />
+            ))}
+          </Feedback>
+        </ScreenScroll>
+      </>}
+    </FlowScreen>
+  );
+}
+
+const styles = StyleSheet.create({
+  summary: { padding: space.lg, flexDirection: 'row', alignItems: 'flex-end', gap: space.sm },
+  area: { flex: 1 },
+  metric: { marginTop: space.xs },
+});
