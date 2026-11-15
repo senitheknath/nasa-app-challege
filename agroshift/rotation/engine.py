@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Any, Sequence
 
+from agroshift.science.climate.climate import Window
 from agroshift.science.knowledge.knowledge import crop_by_id, global_traits, growth_stages, pest_context
 from agroshift.science.decision.screening import find_options
 from .contracts import CropProfile, EnvironmentContext, RotationConfig, RuleFinding, TransitionStatus
 from .rules import DEFAULT_RULES, TransitionRule
-from .timeline_adapter import build_physical_timeline, quantize_crop_to_activity
-from .timeline_core import ArcConstraint, solve_trajectories
+from .timeline_adapter import build_direct_pair_timeline
 
 
 def evaluate_transition(
@@ -97,12 +98,38 @@ def select_candidate_pool(
     if candidate_crop_ids is not None:
         return [cid for cid in candidate_crop_ids if cid in cards_s1 and cid in cards_s2]
 
-    viable = [
+    rank_score = {"possible": 0, "check": 1, "outside": 2, "unknown": 3, "blocked": 4}
+    both_viable = [
         cid
         for cid, c in cards_s1.items()
         if c.get("status") in {"possible", "check"} and cards_s2.get(cid, {}).get("status") in {"possible", "check"}
     ]
-    if len(viable) >= 4:
+    both_viable.sort(
+        key=lambda cid: (
+            rank_score.get(cards_s1[cid].get("status"), 9) + rank_score.get(cards_s2[cid].get("status"), 9),
+            cid,
+        )
+    )
+    either_viable = [
+        cid
+        for cid in cards_s1
+        if cid not in both_viable
+        and (
+            cards_s1[cid].get("status") in {"possible", "check"}
+            or cards_s2.get(cid, {}).get("status") in {"possible", "check"}
+        )
+    ]
+    either_viable.sort(
+        key=lambda cid: (
+            min(
+                rank_score.get(cards_s1[cid].get("status"), 9),
+                rank_score.get(cards_s2[cid].get("status"), 9),
+            ),
+            cid,
+        )
+    )
+    viable = both_viable + either_viable
+    if viable:
         return viable[:limit]
     return list(cards_s1)[:8]
 
@@ -158,14 +185,18 @@ def rate_rotation_sequence(
 
     slots = timeline.get("slots", [])
     slack_bonus = sum(2.5 for s in slots if s.get("delay_slack_days", 0) > 0)
-    time_pts = max(0.0, min(25.0, time_pts + slack_bonus))
+    span_total = sum(s.get("uncertainty_cone", {}).get("span_days", 0) for s in slots)
+    span_penalty = min(6.0, max(0.0, (span_total - 20) * 0.06))
+    coll_prob = float(timeline.get("collision_probability_pct", 0.0) or 0.0)
+    coll_penalty = min(6.0, coll_prob * 0.1)
+    time_pts = max(0.0, min(25.0, time_pts + slack_bonus - span_penalty - coll_penalty))
 
     total = round(climate_pts + trans_pts + time_pts, 1)
-    if total >= 80.0:
+    if total >= 88.0:
         tier = "Excellent"
-    elif total >= 65.0:
+    elif total >= 72.0:
         tier = "Good"
-    elif total >= 48.0:
+    elif total >= 52.0:
         tier = "Moderate"
     else:
         tier = "Restricted"
@@ -337,10 +368,17 @@ def plan_global_rotations(
     from collections import defaultdict
     from dataclasses import replace
 
-    if len(farm.windows) < 2:
-        return []
+    if len(farm.windows) >= 2:
+        w1, w2 = farm.windows[0], farm.windows[1]
+        continuous = False
+    else:
+        w1 = farm.windows[0] if len(farm.windows) == 1 else Window(4, 1, 7, 31)
+        continuous = True
+        _, w1_end = w1.dates(2023)
+        w2_start = w1_end + timedelta(days=14)
+        w2_end = w2_start + timedelta(days=120)
+        w2 = Window(w2_start.month, w2_start.day, w2_end.month, w2_end.day)
 
-    w1, w2 = farm.windows[0], farm.windows[1]
     farm_s1 = replace(farm, windows=(w1,), pilot_confirmed=False)
     farm_s2 = replace(farm, windows=(w2,), pilot_confirmed=False)
 
@@ -398,7 +436,7 @@ def plan_global_rotations(
                 p2,
                 previous_crop=prev_profile,
                 w1=w1,
-                w2=w2,
+                w2=None if continuous else w2,
                 config=config,
                 env=env,
             )
@@ -415,22 +453,16 @@ def plan_global_rotations(
             else:
                 overall_status = "conditional"
 
-            act1 = quantize_crop_to_activity(p1, w1, s1_card)
-            act2 = quantize_crop_to_activity(p2, w2, s2_card)
-
-            def _arc_eval(_a1: Any, _a2: Any) -> ArcConstraint:
-                score = 15.0 if trans["status"] == "complementary" else (-50.0 if trans["status"] == "blocked" else 5.0)
-                return ArcConstraint(
-                    min_buffer=7,
-                    optimal_buffer=21,
-                    compatibility_score=score,
-                    hard_blocked=(trans["status"] == "blocked"),
-                    status=trans["status"],
-                    reasons=tuple(trans["benefits"] + trans["cautions"] + trans["blockers"]),
-                )
-
-            trajs = solve_trajectories([[act1], [act2]], _arc_eval)
-            timeline_data = build_physical_timeline(trajs[0]) if trajs else {}
+            timeline_data = build_direct_pair_timeline(
+                p1,
+                p2,
+                w1,
+                w2,
+                s1_card,
+                s2_card,
+                trans,
+                continuous=continuous,
+            )
 
             rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
             easiness_matrix = compute_easiness_matrix(

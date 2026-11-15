@@ -28,19 +28,47 @@ from agroshift.water_balance import seasonal_water_balance_summary
 
 from api.deps import get_dataset, json_response, parse_weights, resolve_farm, resolve_farm_context
 
+def _resolve_farm_with_context(request: Request, payload: dict) -> tuple[Any, dict]:
+    """Resolve farm from inline fields, saved farm_id, or GeoJSON boundary context."""
+    ctx = resolve_farm_context(request, payload)
+    merged_payload = dict(payload)
+    if "farm" not in merged_payload:
+        merged_payload["latitude"] = ctx["latitude"]
+        merged_payload["longitude"] = ctx["longitude"]
+        merged_payload["country"] = ctx["country"]
+        if ctx.get("area_ha") is not None and merged_payload.get("area_ha") is None:
+            merged_payload["area_ha"] = ctx["area_ha"]
+    return resolve_farm(request, merged_payload), ctx
+
+
+def _autofill_missing_env(farm: Any, ds: Any, ctx: dict, *, offline: bool = False) -> Any:
+    """Populate missing pH, drainage, or area_ha from verified Earth observations."""
+    if farm.ph is not None and farm.drainage != "unknown" and farm.area_ha is not None:
+        return farm
+    from dataclasses import replace
+
+    af = derive_field_autofill(
+        farm.latitude,
+        farm.longitude,
+        farm.country,
+        boundary=ctx.get("boundary"),
+        area_ha=ctx.get("area_ha"),
+        dataset=ds,
+        offline=offline,
+    )["autofill"]
+    return replace(
+        farm,
+        ph=af["ph"]["value"] if farm.ph is None else farm.ph,
+        drainage=af["drainage"]["value"] if farm.drainage == "unknown" else farm.drainage,
+        area_ha=af["area_ha"]["value"] if farm.area_ha is None else farm.area_ha,
+    )
+
+
 async def screen(request: Request) -> Response:
     """Screen all 107 crops for a farm/shape's climate, soil, and seasonal windows, with possible-crop filtering."""
     try:
         payload = await request.json()
-        ctx = resolve_farm_context(request, payload)
-        merged_payload = dict(payload)
-        if "farm" not in merged_payload:
-            merged_payload["latitude"] = ctx["latitude"]
-            merged_payload["longitude"] = ctx["longitude"]
-            merged_payload["country"] = ctx["country"]
-            if ctx.get("area_ha") is not None and merged_payload.get("area_ha") is None:
-                merged_payload["area_ha"] = ctx["area_ha"]
-        farm = resolve_farm(request, merged_payload)
+        farm, ctx = _resolve_farm_with_context(request, payload)
         weights = parse_weights(payload.get("weights"))
         include_matrix = bool(payload.get("include_sowing_matrix", True))
         auto_env = bool(payload.get("auto_env", True))
@@ -54,24 +82,7 @@ async def screen(request: Request) -> Response:
 
         def _run():
             ds = get_dataset(farm.latitude, farm.longitude)
-            active_farm = farm
-            if auto_env and (active_farm.ph is None or active_farm.drainage == "unknown" or active_farm.area_ha is None):
-                af = derive_field_autofill(
-                    active_farm.latitude,
-                    active_farm.longitude,
-                    active_farm.country,
-                    boundary=ctx.get("boundary"),
-                    area_ha=ctx.get("area_ha"),
-                    dataset=ds,
-                    offline=offline,
-                )["autofill"]
-                from dataclasses import replace
-                active_farm = replace(
-                    active_farm,
-                    ph=af["ph"]["value"] if active_farm.ph is None else active_farm.ph,
-                    drainage=af["drainage"]["value"] if active_farm.drainage == "unknown" else active_farm.drainage,
-                    area_ha=af["area_ha"]["value"] if active_farm.area_ha is None else active_farm.area_ha,
-                )
+            active_farm = _autofill_missing_env(farm, ds, ctx, offline=offline) if auto_env else farm
             cards = find_options(active_farm, ds, weights=weights)
             risk = seasonal_weather_risk_summary(ds, active_farm.windows[0])
             caps = capabilities(active_farm, ds, cards)
@@ -177,17 +188,27 @@ async def crop_details(request: Request) -> Response:
 
 
 async def rotations(request: Request) -> Response:
-    """Plan and rate multi-season crop rotations with classical interval DAG physical timelines."""
+    """Plan and rate crop rotations using season-free continuous chaining or bounded windows."""
     try:
         payload = await request.json()
-        farm = resolve_farm(request, payload)
+        farm, ctx = _resolve_farm_with_context(request, payload)
         max_sequences = int(payload.get("max_sequences", 16))
+        auto_env = bool(payload.get("auto_env", True))
+        offline = bool(payload.get("offline", False))
+        candidate_crop_ids = payload.get("candidate_crop_ids")
 
         def _run():
             ds = get_dataset(farm.latitude, farm.longitude)
-            plans = plan_global_rotations(farm, ds, max_sequences=max_sequences)
+            active_farm = _autofill_missing_env(farm, ds, ctx, offline=offline) if auto_env else farm
+            plans = plan_global_rotations(
+                active_farm,
+                ds,
+                candidate_crop_ids=candidate_crop_ids,
+                max_sequences=max_sequences,
+            )
             return {
                 "status": "success",
+                "mode": "continuous" if len(active_farm.windows) < 2 else "bounded_windows",
                 "total": len(plans),
                 "rotations": plans,
             }

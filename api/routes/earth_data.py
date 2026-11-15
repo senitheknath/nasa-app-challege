@@ -188,11 +188,10 @@ async def monitor_3d(request: Request) -> Response:
         refresh = bool(payload.get("refresh", False))
         weather_volatility = float(payload.get("weather_volatility", 0.18))
         raw_windows = payload.get("windows")
-        windows = (
-            parse_windows(raw_windows)
-            if raw_windows
-            else (Window(10, 1, 1, 20), Window(3, 1, 6, 30))
+        start_date = payload.get("start_date") or (
+            payload.get("farm").get("start_date") if isinstance(payload.get("farm"), dict) else None
         )
+        windows = parse_windows(raw_windows, start_date=start_date)
         max_sequences = int(payload.get("max_sequences", 6))
 
         def _run():

@@ -4,6 +4,7 @@ from __future__ import annotations
 import calendar
 from collections import OrderedDict
 from dataclasses import asdict, is_dataclass
+from datetime import date, timedelta
 import math
 import threading
 from typing import Any
@@ -70,26 +71,60 @@ def get_dataset(latitude: float, longitude: float, refresh: bool = False):
     return ds
 
 
-def parse_windows(raw_windows: Any) -> tuple[Window, ...]:
+def _window_from_start(
+    start_month: int,
+    start_day: int,
+    duration_days: int = 120,
+    ref_year: int = 2023,
+) -> Window:
+    """Construct a recurring Window from start month/day and duration in days."""
+    if start_month == 2 and start_day == 29:
+        start_day = 28
+    start = date(ref_year, start_month, start_day)
+    end = start + timedelta(days=max(int(duration_days) - 1, 0))
+    end_month, end_day = end.month, end.day
+    if end_month == 2 and end_day == 29:
+        end_day = 28
+    return Window(start_month, start_day, end_month, end_day)
+
+
+def parse_windows(raw_windows: Any, start_date: str | None = None) -> tuple[Window, ...]:
     if not raw_windows:
+        if start_date:
+            dt = date.fromisoformat(str(start_date).strip()[:10])
+            return (_window_from_start(dt.month, dt.day, 120),)
         return (Window(5, 1, 8, 31),)
     parsed = []
     for item in raw_windows:
-        parsed.append(
-            Window(
-                int(item["start_month"]),
-                int(item["start_day"]),
-                int(item["end_month"]),
-                int(item["end_day"]),
+        if "start_month" not in item and item.get("start_date"):
+            dt = date.fromisoformat(str(item["start_date"]).strip()[:10])
+            duration_days = int(item["duration_days"]) if item.get("duration_days") is not None else 120
+            parsed.append(_window_from_start(dt.month, dt.day, duration_days))
+            continue
+        start_month = int(item["start_month"])
+        start_day = int(item["start_day"]) if item.get("start_day") is not None else 1
+        if item.get("end_month") is not None and item.get("end_day") is not None:
+            parsed.append(
+                Window(
+                    start_month,
+                    start_day,
+                    int(item["end_month"]),
+                    int(item["end_day"]),
+                )
             )
-        )
+        else:
+            duration_days = int(item["duration_days"]) if item.get("duration_days") is not None else 120
+            parsed.append(_window_from_start(start_month, start_day, duration_days))
     return tuple(parsed)
 
 
 def parse_farm(payload: dict[str, Any]) -> Farm:
     raw = payload.get("farm") if isinstance(payload.get("farm"), dict) else payload
     defaults = Farm()
-    windows = parse_windows(raw.get("windows"))
+    windows = parse_windows(
+        raw.get("windows"),
+        start_date=raw.get("start_date") or payload.get("start_date"),
+    )
     ph = raw.get("ph")
     area_ha = raw.get("area_ha")
     irrigation_mm = raw.get("irrigation_mm")
