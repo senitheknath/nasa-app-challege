@@ -4,6 +4,8 @@ import { calendarDate } from '@/utils/format';
 
 export type GeoPoint = { latitude: number; longitude: number };
 
+export type RotationFilterId = 'default' | 'water' | 'soil' | 'pest' | 'ease';
+
 export type SavedFarmInput = {
   id: number;
   name: string;
@@ -34,6 +36,8 @@ type Draft = {
   cropId: string | null;
   sowingDate: string;
   selectedRotationId: string | null;
+  rotationFilter: RotationFilterId;
+  customCropIds: string[];
   tNowDay: number;
   observedNdvi: number | null;
   weatherVolatility: number;
@@ -56,6 +60,8 @@ const initial = (): Draft => ({
   cropId: null,
   sowingDate: calendarDate(),
   selectedRotationId: null,
+  rotationFilter: 'default',
+  customCropIds: [],
   tNowDay: 42,
   observedNdvi: null,
   weatherVolatility: 0.18,
@@ -109,6 +115,9 @@ type Planner = Draft & {
   chooseCrop: (cropId: string) => void;
   setDate: (sowingDate: string) => void;
   selectRotation: (id: string | null) => void;
+  setRotationFilter: (filter: RotationFilterId) => void;
+  setCustomCropIds: (cropIds: string[]) => void;
+  toggleCustomCropId: (cropId: string) => void;
   setMonitorParams: (params: { tNowDay?: number; observedNdvi?: number | null; weatherVolatility?: number }) => void;
   setSavedFarmMeta: (farmId: number | null, farmName?: string) => void;
   loadSavedFarm: (farm: SavedFarmInput) => void;
@@ -178,6 +187,17 @@ export const usePlanner = create<Planner>()((set) => ({
   chooseCrop: (cropId) => set((state) => (state.cropId === cropId ? state : { cropId, reached: Math.min(state.reached, 4) })),
   setDate: (sowingDate) => set((state) => (state.sowingDate === sowingDate ? state : { sowingDate, reached: Math.min(state.reached, 4) })),
   selectRotation: (selectedRotationId) => set({ selectedRotationId }),
+  setRotationFilter: (rotationFilter) => set({ rotationFilter }),
+  setCustomCropIds: (cropIds) => set({ customCropIds: Array.from(new Set(cropIds)).slice(0, 4) }),
+  toggleCustomCropId: (cropId) => set((state) => {
+    if (state.customCropIds.includes(cropId)) {
+      return { customCropIds: state.customCropIds.filter((id) => id !== cropId) };
+    }
+    if (state.customCropIds.length >= 4) {
+      return state;
+    }
+    return { customCropIds: [...state.customCropIds, cropId] };
+  }),
   setMonitorParams: (params) => set((state) => ({
     tNowDay: params.tNowDay !== undefined ? params.tNowDay : state.tNowDay,
     observedNdvi: params.observedNdvi !== undefined ? params.observedNdvi : state.observedNdvi,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PanResponder, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { PanResponder, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   type SharedValue,
   useAnimatedStyle,
@@ -10,6 +10,15 @@ import Animated, {
 import Svg, { Circle, Path } from 'react-native-svg';
 import { useTheme } from '@/theme/useTheme';
 import { Icon } from './Icon';
+
+export type RotationFilterOptionId = 'default' | 'water' | 'soil' | 'pest' | 'ease';
+
+export type CropPickerItem = {
+  id: string;
+  name: string;
+  family?: string;
+  category?: string;
+};
 
 export type CarouselSlotItem = {
   cropId: string;
@@ -41,6 +50,18 @@ export type AlternativePlanItem = {
   isBest?: boolean;
   cropCount?: number;
   totalDays?: number;
+  isCustom?: boolean;
+  filterScores?: Record<RotationFilterOptionId, number>;
+  filterBadges?: Record<RotationFilterOptionId, string>;
+  customComparison?: { gapPts: number; reason: string };
+  smartSwap?: {
+    replaceCropId: string;
+    replaceCropName: string;
+    withCropId: string;
+    withCropName: string;
+    gainPts: number;
+    reason: string;
+  };
 };
 
 const CARD_WIDTH = 104;
@@ -516,25 +537,375 @@ export function RotationCarousel({
   );
 }
 
+type FilterIconName = 'sparkle' | 'drop' | 'sprout' | 'shield' | 'clock';
+
+const FILTER_OPTIONS: readonly {
+  id: RotationFilterOptionId;
+  label: string;
+  icon: FilterIconName;
+}[] = [
+  { id: 'default', label: 'Best Match', icon: 'sparkle' },
+  { id: 'water', label: 'Water Saving', icon: 'drop' },
+  { id: 'soil', label: 'Soil & Nitrogen', icon: 'sprout' },
+  { id: 'pest', label: 'Pest Break', icon: 'shield' },
+  { id: 'ease', label: 'Easy Cycle', icon: 'clock' },
+];
+
+function FilterBarIcon({
+  name,
+  color,
+  size = 13,
+}: {
+  name: FilterIconName;
+  color: string;
+  size?: number;
+}) {
+  if (name === 'drop' || name === 'sprout') {
+    return <Icon name={name} size={size} color={color} />;
+  }
+  const path =
+    name === 'sparkle'
+      ? 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3ZM19 3v4M21 5h-4M5 17v3M6.5 18.5h-3'
+      : name === 'shield'
+        ? 'M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3Z'
+        : 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2';
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <Path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+export function RotationFilterBar({
+  activeFilter,
+  onSelectFilter,
+}: {
+  activeFilter: RotationFilterOptionId;
+  onSelectFilter: (filter: RotationFilterOptionId) => void;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.filterBarContent}
+      style={styles.filterBarScroll}
+    >
+      {FILTER_OPTIONS.map((opt) => {
+        const isActive = opt.id === activeFilter;
+        const fgColor = isActive ? '#18200e' : '#e5ecd8';
+        return (
+          <Pressable
+            key={opt.id}
+            accessibilityRole="button"
+            accessibilityLabel={opt.label}
+            accessibilityState={{ selected: isActive }}
+            onPress={() => onSelectFilter(opt.id)}
+            style={[
+              styles.filterPill,
+              isActive ? styles.filterPillActive : styles.filterPillInactive,
+            ]}
+          >
+            <FilterBarIcon name={opt.icon} color={fgColor} size={13} />
+            <Text
+              style={[
+                styles.filterPillText,
+                isActive ? styles.filterPillTextActive : styles.filterPillTextInactive,
+              ]}
+              numberOfLines={1}
+            >
+              {opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function formatCropTag(crop: CropPickerItem): string | undefined {
+  const raw = `${crop.family ?? ''} ${crop.category ?? ''}`.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw.includes('fabaceae') || raw.includes('legume') || raw.includes('pulse')) return 'Legume';
+  if (raw.includes('poaceae') || raw.includes('gramineae') || raw.includes('cereal') || raw.includes('grain')) return 'Cereal';
+  if (raw.includes('root') || raw.includes('tuber') || raw.includes('convolvulaceae') || raw.includes('euphorbiaceae')) return 'Root';
+  if (raw.includes('solanaceae')) return 'Solanaceae';
+  if (raw.includes('brassicaceae')) return 'Brassica';
+  if (raw.includes('oilseed') || raw.includes('pedaliaceae') || raw.includes('asteraceae')) return 'Oilseed';
+  if (raw.includes('malvaceae')) return 'Fiber';
+  const fallback = crop.category || crop.family;
+  if (!fallback) return undefined;
+  return fallback.length > 12 ? `${fallback.slice(0, 11).trimEnd()}…` : fallback;
+}
+
+export function CustomCropBuilderCard({
+  availableCrops,
+  selectedCropIds,
+  pinnedCropId,
+  pinnedCropName,
+  customRotation,
+  totalRotations,
+  onToggleCrop,
+  onClearCrops,
+  onApplySmartSwap,
+  onSelectCustomRotation,
+}: {
+  availableCrops: readonly CropPickerItem[];
+  selectedCropIds: readonly string[];
+  pinnedCropId?: string;
+  pinnedCropName?: string;
+  customRotation?: AlternativePlanItem;
+  totalRotations?: number;
+  onToggleCrop: (cropId: string) => void;
+  onClearCrops: () => void;
+  onApplySmartSwap?: (replaceCropId: string, withCropId: string) => void;
+  onSelectCustomRotation?: (rotationId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const pickerCrops = availableCrops.slice(0, 18);
+
+  return (
+    <View style={[styles.builderCard, customRotation && styles.builderCardActive]}>
+      {customRotation ? (
+        <View style={styles.builderCustomBlock}>
+          <View style={styles.builderCustomHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Select your custom rotation ranked #${customRotation.rank}`}
+              onPress={() => onSelectCustomRotation?.(customRotation.id)}
+              style={styles.builderCustomHeaderLeft}
+            >
+              <View style={styles.builderBadgeRow}>
+                <View style={styles.builderCustomBadge}>
+                  <Text style={styles.builderCustomBadgeText}>★ YOUR CUSTOM ROTATION</Text>
+                </View>
+                <Text style={styles.builderRankMeta} numberOfLines={1}>
+                  Ranked #{customRotation.rank} of {totalRotations ?? 1} · {Math.round(customRotation.score)} pts
+                </Text>
+              </View>
+              <Text style={styles.builderChainText} numberOfLines={2}>
+                {customRotation.slots.map((s) => s.cropName).join(' → ')}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={expanded ? 'Close crop editor' : 'Edit crops'}
+              onPress={() => setExpanded((prev) => !prev)}
+              hitSlop={6}
+              style={styles.builderEditPill}
+            >
+              <Text style={styles.builderEditPillText}>
+                {expanded ? 'Close' : 'Edit crops'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {customRotation.customComparison && (
+            <View
+              style={[
+                styles.comparisonPill,
+                customRotation.rank === 1 || customRotation.customComparison.gapPts >= 0
+                  ? styles.comparisonPillLime
+                  : styles.comparisonPillAmber,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.comparisonPillText,
+                  customRotation.rank === 1 || customRotation.customComparison.gapPts >= 0
+                    ? styles.comparisonPillTextLime
+                    : styles.comparisonPillTextAmber,
+                ]}
+                numberOfLines={2}
+              >
+                {customRotation.rank === 1 || customRotation.customComparison.gapPts >= 0
+                  ? customRotation.customComparison.reason.startsWith('★')
+                    ? customRotation.customComparison.reason
+                    : `★ #1 Best choice · ${customRotation.customComparison.reason}`
+                  : `Rank #${customRotation.rank}: ${customRotation.customComparison.reason} (${customRotation.customComparison.gapPts} pts vs #1)`}
+              </Text>
+            </View>
+          )}
+
+          {customRotation.smartSwap && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Swap ${customRotation.smartSwap.replaceCropName} to ${customRotation.smartSwap.withCropName}`}
+              onPress={() =>
+                onApplySmartSwap?.(
+                  customRotation.smartSwap!.replaceCropId,
+                  customRotation.smartSwap!.withCropId
+                )
+              }
+              style={styles.smartSwapChip}
+            >
+              <FilterBarIcon name="sparkle" color={LIME} size={13} />
+              <Text style={styles.smartSwapChipText} numberOfLines={2}>
+                Swap {customRotation.smartSwap.replaceCropName} → {customRotation.smartSwap.withCropName} (+
+                {Math.round(customRotation.smartSwap.gainPts)} pts · {customRotation.smartSwap.reason})
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Test and score your own crops"
+          onPress={() => setExpanded((prev) => !prev)}
+          style={styles.builderEmptyRow}
+        >
+          <View style={styles.builderEmptyLeft}>
+            <View style={styles.builderEmptyIconWrap}>
+              <Icon name="sprout" size={16} color={LIME} />
+            </View>
+            <View style={styles.builderEmptyCopy}>
+              <Text style={styles.builderEmptyTitle} numberOfLines={1}>
+                Test & Score Your Own Crops
+              </Text>
+              <Text style={styles.builderEmptySubtitle} numberOfLines={2}>
+                Pick 2–4 crops you have to see their best rotation order & rank
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.pickCropsPill}>
+            <Text style={styles.pickCropsPillText}>
+              {expanded ? 'Close' : '+ Pick crops'}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+
+      {expanded && (
+        <View style={styles.builderDrawer}>
+          {pinnedCropName ? (
+            <View style={styles.pinnedCropPill}>
+              <Icon name="pin" size={12} color={LIME} />
+              <Text style={styles.pinnedCropText} numberOfLines={1}>
+                Stage 1 (In field): {pinnedCropName} (Pinned)
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.cropGrid}>
+            {pickerCrops.map((crop) => {
+              const isPinned = Boolean(pinnedCropId && crop.id === pinnedCropId);
+              const isSelected = selectedCropIds.includes(crop.id);
+              const tag = formatCropTag(crop);
+              return (
+                <Pressable
+                  key={crop.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected, disabled: isPinned }}
+                  disabled={isPinned}
+                  onPress={() => onToggleCrop(crop.id)}
+                  style={[
+                    styles.cropPickerPill,
+                    isSelected
+                      ? styles.cropPickerPillSelected
+                      : isPinned
+                        ? styles.cropPickerPillPinned
+                        : styles.cropPickerPillUnselected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.cropPickerName,
+                      isSelected ? styles.cropPickerNameSelected : styles.cropPickerNameUnselected,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {crop.name}
+                  </Text>
+                  {tag ? (
+                    <Text
+                      style={[
+                        styles.cropPickerTag,
+                        isSelected ? styles.cropPickerTagSelected : styles.cropPickerTagUnselected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {tag}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.drawerFooterRow}>
+            <View style={styles.drawerFooterLeft}>
+              <Text style={styles.drawerSelectionCount}>
+                {selectedCropIds.length} selected (pick 2–4)
+              </Text>
+              {selectedCropIds.length > 0 && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Reset selected crops"
+                  onPress={onClearCrops}
+                  hitSlop={6}
+                  style={styles.drawerResetBtn}
+                >
+                  <Text style={styles.drawerResetText}>Reset</Text>
+                </Pressable>
+              )}
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Done picking crops"
+              onPress={() => setExpanded(false)}
+              style={styles.drawerDonePill}
+            >
+              <Text style={styles.drawerDoneText}>Done</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function AlternativesList({
   rotations,
   selectedId,
+  activeFilter,
   onSelect,
+  onApplySmartSwap,
 }: {
   rotations: readonly AlternativePlanItem[];
   selectedId?: string;
+  activeFilter?: RotationFilterOptionId;
   onSelect: (id: string) => void;
+  onApplySmartSwap?: (replaceCropId: string, withCropId: string) => void;
 }) {
+  const filterLabel = (activeFilter ?? 'default').toUpperCase();
+
   return (
     <View style={styles.alternativesList}>
       {rotations.map((rot, index) => {
         const isSelected = rot.id === selectedId;
-        const isBest = rot.isBest ?? (rot.rank === 1 || index === 0);
-        const cardTitle = isBest ? 'Best Rotation' : `Alternative ${index + 1}`;
+        const isCustom = Boolean(rot.isCustom);
+        const isTopRegional = rot.rank === 1 && !isCustom;
+        const isBest = !isCustom && (rot.isBest ?? (rot.rank === 1 || index === 0));
+        const cardTitle = isCustom
+          ? 'Your Custom Rotation'
+          : isBest
+            ? 'Best Rotation'
+            : `Alternative ${index + 1}`;
         const cropCount = rot.cropCount ?? rot.slots.length;
         const metaSummary = rot.totalDays
           ? `${cropCount} crops · ${rot.totalDays}d cycle`
           : `${cropCount} crops`;
+        const isPositiveCustom =
+          rot.rank === 1 || (rot.customComparison != null && rot.customComparison.gapPts >= 0);
 
         return (
           <Pressable
@@ -544,16 +915,28 @@ export function AlternativesList({
             onPress={() => onSelect(rot.id)}
             style={[
               styles.alternativeCard,
-              isSelected
-                ? styles.alternativeCardSelected
-                : isBest
-                ? styles.alternativeCardBest
-                : styles.alternativeCardUnselected,
+              isCustom
+                ? isSelected
+                  ? styles.alternativeCardCustomSelected
+                  : styles.alternativeCardCustom
+                : isSelected
+                  ? styles.alternativeCardSelected
+                  : isBest
+                    ? styles.alternativeCardBest
+                    : styles.alternativeCardUnselected,
             ]}
           >
             <View style={styles.alternativeHeaderRow}>
               <View style={styles.alternativeLeftCol}>
-                {isBest ? (
+                {isCustom ? (
+                  <Text style={styles.bestTagText} numberOfLines={1}>
+                    ★ YOUR CUSTOM ROTATION · RANK #{rot.rank}
+                  </Text>
+                ) : isTopRegional ? (
+                  <Text style={styles.bestTagText} numberOfLines={1}>
+                    ★ #1 BEST FOR {filterLabel} · {rot.period}
+                  </Text>
+                ) : isBest ? (
                   <Text style={styles.bestTagText} numberOfLines={1}>
                     ★ BEST ROTATION · {rot.period}
                   </Text>
@@ -563,9 +946,20 @@ export function AlternativesList({
                   </Text>
                 )}
 
-                <Text style={styles.alternativeTitle} numberOfLines={1}>
-                  {cardTitle}
-                </Text>
+                {isCustom ? (
+                  <View style={styles.customTitleRow}>
+                    <Text style={styles.alternativeTitle} numberOfLines={1}>
+                      {cardTitle}
+                    </Text>
+                    <Text style={styles.customTitleScore} numberOfLines={1}>
+                      {Math.round(rot.score)} pts
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.alternativeTitle} numberOfLines={1}>
+                    {cardTitle}
+                  </Text>
+                )}
 
                 <Text style={styles.alternativeMeta} numberOfLines={1}>
                   {metaSummary}
@@ -584,7 +978,7 @@ export function AlternativesList({
                 )}
 
                 <View style={styles.alternativeBadge}>
-                  <Icon name={isBest ? 'check' : 'sprout'} size={11} color={LIME} />
+                  <Icon name={isBest || isCustom ? 'check' : 'sprout'} size={11} color={LIME} />
                   <Text style={styles.alternativeBadgeText} numberOfLines={1}>
                     {rot.badge} · {Math.round(rot.score)} pts
                   </Text>
@@ -625,6 +1019,46 @@ export function AlternativesList({
                 </View>
               ))}
             </View>
+
+            {isCustom && rot.customComparison && (
+              <View
+                style={[
+                  styles.comparisonPill,
+                  isPositiveCustom ? styles.comparisonPillLime : styles.comparisonPillAmber,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.comparisonPillText,
+                    isPositiveCustom ? styles.comparisonPillTextLime : styles.comparisonPillTextAmber,
+                  ]}
+                  numberOfLines={2}
+                >
+                  {rot.customComparison.reason}
+                </Text>
+              </View>
+            )}
+
+            {isCustom && rot.smartSwap && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Swap ${rot.smartSwap.replaceCropName} to ${rot.smartSwap.withCropName}`}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  onApplySmartSwap?.(
+                    rot.smartSwap!.replaceCropId,
+                    rot.smartSwap!.withCropId
+                  );
+                }}
+                style={styles.smartSwapChip}
+              >
+                <FilterBarIcon name="sparkle" color={LIME} size={13} />
+                <Text style={styles.smartSwapChipText} numberOfLines={2}>
+                  Swap {rot.smartSwap.replaceCropName} → {rot.smartSwap.withCropName} (+
+                  {Math.round(rot.smartSwap.gainPts)} pts)
+                </Text>
+              </Pressable>
+            )}
           </Pressable>
         );
       })}
@@ -1138,5 +1572,349 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#7f9369',
+  },
+
+  filterBarScroll: {
+    width: '100%',
+    flexGrow: 0,
+  },
+  filterBarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  filterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  filterPillActive: {
+    backgroundColor: LIME,
+    borderColor: LIME,
+  },
+  filterPillInactive: {
+    backgroundColor: '#222b15',
+    borderColor: '#334022',
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterPillTextActive: {
+    color: '#18200e',
+    fontWeight: '700',
+  },
+  filterPillTextInactive: {
+    color: '#dfe8cf',
+  },
+
+  builderCard: {
+    width: '100%',
+    borderRadius: 20,
+    backgroundColor: '#212c15',
+    borderWidth: 1,
+    borderColor: '#3a4b26',
+    padding: 12,
+    gap: 10,
+  },
+  builderCardActive: {
+    backgroundColor: '#253214',
+    borderWidth: 1.5,
+    borderColor: 'rgba(184, 243, 52, 0.72)',
+  },
+  builderCustomBlock: {
+    gap: 8,
+  },
+  builderCustomHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  builderCustomHeaderLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  builderBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  builderCustomBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(184, 243, 52, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(184, 243, 52, 0.42)',
+  },
+  builderCustomBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    letterSpacing: 0.45,
+    color: LIME,
+  },
+  builderRankMeta: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#e5ecd8',
+  },
+  builderChainText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#ffffff',
+    lineHeight: 18,
+  },
+  builderEditPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#314020',
+    borderWidth: 1,
+    borderColor: '#485b32',
+    flexShrink: 0,
+  },
+  builderEditPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#e5ecd8',
+  },
+  builderEmptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  builderEmptyLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  builderEmptyIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(184, 243, 52, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(184, 243, 52, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  builderEmptyCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  builderEmptyTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  builderEmptySubtitle: {
+    fontSize: 11,
+    color: '#9eb08e',
+    lineHeight: 15,
+  },
+  pickCropsPill: {
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: LIME,
+    flexShrink: 0,
+  },
+  pickCropsPillText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#18200e',
+  },
+  comparisonPill: {
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+  },
+  comparisonPillLime: {
+    backgroundColor: 'rgba(184, 243, 52, 0.1)',
+    borderColor: 'rgba(184, 243, 52, 0.34)',
+  },
+  comparisonPillAmber: {
+    backgroundColor: 'rgba(245, 196, 81, 0.1)',
+    borderColor: 'rgba(245, 196, 81, 0.34)',
+  },
+  comparisonPillText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  comparisonPillTextLime: {
+    color: LIME,
+  },
+  comparisonPillTextAmber: {
+    color: '#f5c451',
+  },
+  smartSwapChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(184, 243, 52, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(184, 243, 52, 0.45)',
+  },
+  smartSwapChipText: {
+    flex: 1,
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#eaf7c4',
+    lineHeight: 16,
+  },
+  builderDrawer: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    paddingTop: 10,
+    gap: 10,
+  },
+  pinnedCropPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#1b2411',
+    borderWidth: 1,
+    borderColor: 'rgba(184, 243, 52, 0.35)',
+  },
+  pinnedCropText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#d8e8c5',
+  },
+  cropGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  cropPickerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  cropPickerPillSelected: {
+    backgroundColor: LIME,
+    borderColor: LIME,
+  },
+  cropPickerPillPinned: {
+    backgroundColor: 'rgba(184, 243, 52, 0.14)',
+    borderColor: 'rgba(184, 243, 52, 0.4)',
+    opacity: 0.78,
+  },
+  cropPickerPillUnselected: {
+    backgroundColor: '#222b15',
+    borderColor: '#334022',
+  },
+  cropPickerName: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  cropPickerNameSelected: {
+    color: '#18200e',
+    fontWeight: '700',
+  },
+  cropPickerNameUnselected: {
+    color: '#f1f4e6',
+  },
+  cropPickerTag: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  cropPickerTagSelected: {
+    color: '#253214',
+    backgroundColor: 'rgba(24, 32, 14, 0.14)',
+  },
+  cropPickerTagUnselected: {
+    color: '#9eb08e',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  drawerFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  drawerFooterLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  drawerSelectionCount: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#9eb08e',
+  },
+  drawerResetBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#2d391e',
+  },
+  drawerResetText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#e5ecd8',
+  },
+  drawerDonePill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: LIME,
+  },
+  drawerDoneText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#18200e',
+  },
+
+  alternativeCardCustom: {
+    backgroundColor: '#253214',
+    borderColor: LIME,
+    borderWidth: 1.5,
+  },
+  alternativeCardCustomSelected: {
+    backgroundColor: '#253214',
+    borderColor: '#e2ff66',
+    borderWidth: 1.5,
+  },
+  customTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  customTitleScore: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: LIME,
   },
 });

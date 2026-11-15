@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod';
-import { baseUrl } from './config';
+import { baseUrl, serverStore } from './config';
 import { ApiError } from './errors';
 import { expireSession, tokenStore } from './session';
 
@@ -21,7 +21,8 @@ function endpoint(request: Request) {
 }
 
 async function http(request: Request): Promise<unknown> {
-  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) throw new ApiError('configuration');
+  const activeBaseUrl = serverStore ? await serverStore.get() : baseUrl;
+  if (!activeBaseUrl || !/^https?:\/\//i.test(activeBaseUrl)) throw new ApiError('configuration');
   const token = await tokenStore.get().catch((cause) => { throw new ApiError('configuration', undefined, undefined, { cause }); });
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -29,7 +30,7 @@ async function http(request: Request): Promise<unknown> {
 
   let response: Response;
   try {
-    response = await fetch(baseUrl + endpoint(request), {
+    response = await fetch(activeBaseUrl + endpoint(request), {
       method: request.method ?? 'GET',
       headers,
       signal: request.signal,
