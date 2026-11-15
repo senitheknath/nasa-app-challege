@@ -23,7 +23,7 @@ export function StepBar({ current, reached, skipped, onStep }: {
         const locked = step > reached || step === skipped;
         return (
           <Pressable key={label} accessibilityRole="tab" accessibilityLabel={label}
-            accessibilityState={{ selected: active, disabled: locked }} disabled={locked} onPress={() => onStep(step)}
+            accessibilityState={{ selected: active, disabled: locked }} aria-selected={active} disabled={locked} onPress={() => onStep(step)}
             style={({ pressed }) => [styles.tab, !locked && styles.available, active && styles.active,
               pressed && !reducedMotion && styles.pressed]}>
             <View>

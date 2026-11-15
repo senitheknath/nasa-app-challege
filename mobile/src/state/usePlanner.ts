@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { polygonArea, type Point } from '@/features/area/model';
+import { isValidBoundary, type Point } from '@/features/area/model';
 import { calendarDate } from '@/utils/format';
 
 type Draft = {
@@ -32,11 +32,14 @@ export const usePlanner = create<Planner>()((set) => ({
   ...initial(),
   chooseCountry: (countryId) => set((state) => state.countryId === countryId ? state : { ...initial(), countryId, reached: 2 }),
   addPoint: (point) => set((state) => state.closed ? state : { points: [...state.points, point] }),
-  close: () => set((state) => polygonArea(state.points) > 0 ? { closed: true } : state),
+  close: () => set((state) => isValidBoundary(state.points) ? { closed: true } : state),
   clearField: () => set({ points: [], closed: false, reached: 2 }),
-  chooseStrategy: (strategyId) => set({ strategyId }),
-  chooseCrop: (cropId) => set({ cropId }),
-  setDate: (sowingDate) => set({ sowingDate }),
+  chooseStrategy: (strategyId) => set((state) => state.strategyId === strategyId ? state
+    : { strategyId, reached: Math.min(state.reached, 3) }),
+  chooseCrop: (cropId) => set((state) => state.cropId === cropId ? state
+    : { cropId, reached: Math.min(state.reached, 4) }),
+  setDate: (sowingDate) => set((state) => state.sowingDate === sowingDate ? state
+    : { sowingDate, reached: Math.min(state.reached, 4) }),
   unlock: (step) => set((state) => ({ reached: Math.max(state.reached, step) })),
   reset: () => set(initial()),
 }));

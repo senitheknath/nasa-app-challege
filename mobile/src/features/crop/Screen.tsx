@@ -11,13 +11,13 @@ import { strings } from '@/i18n/strings';
 import { usePlanner } from '@/state/usePlanner';
 import { pictures } from '@/theme/images';
 import { colors, space } from '@/theme/tokens';
-import { calendarDate } from '@/utils/format';
+import { calendarDate, lastYalaDate } from '@/utils/format';
 import { tap } from '@/utils/haptics';
 import { useCountryData } from '../country/hooks';
-import { continueTo, FlowScreen } from '../planner/FlowScreen';
+import { continueTo, FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useCategories, useCrops } from './hooks';
 
-const presets = [0, -30, -180];
+const presets = [() => calendarDate(), () => calendarDate(new Date(), -30), () => lastYalaDate()];
 
 export default function CropScreen() {
   const country = usePlanner((draft) => draft.countryId);
@@ -28,62 +28,70 @@ export default function CropScreen() {
   const categories = useCategories(country);
   const [choice, setChoice] = useState('');
   const [search, setSearch] = useState('');
-  const query = useCrops(country, useDebouncedValue(search.trim()), choice);
+  const term = search.trim();
+  const settledTerm = useDebouncedValue(term);
+  const searching = settledTerm !== term;
+  const query = useCrops(country, settledTerm, choice);
   const offline = useOffline();
   const crops = query.data?.pages.flatMap((page) => page.items) ?? [];
-  const state = viewState(query, offline, crops.length > 0);
-  const categoryState = viewState(categories, offline, !!categories.data?.length);
-  const cropId = selected ?? bootstrap.data?.defaultCropId ?? crops[0]?.id;
+  const state = searching && !offline ? 'loading' : viewState(query, offline, crops.length > 0);
+  const categoryState = viewState(categories, offline, categories.data !== undefined);
+  const defaultCrop = crops.find((crop) => crop.id === bootstrap.data?.defaultCropId);
+  const fallbackCrop = !term && !choice && !query.hasNextPage ? crops[0] : undefined;
+  const cropId = selected ?? defaultCrop?.id ?? fallbackCrop?.id;
+  const canGenerate = state === 'ready' && crops.some((crop) => crop.id === cropId);
   const refresh = () => {
     void query.refetch();
     void categories.refetch();
     void bootstrap.refetch();
   };
   const more = () => {
-    if (query.hasNextPage && !query.isFetching) void query.fetchNextPage();
+    if (query.hasNextPage && !query.isFetching) void query.fetchNextPage({ cancelRefetch: false });
   };
 
   return (
-    <FlowScreen step={4} action={strings.generate} disabled={offline || !cropId || (state !== 'ready' && state !== 'empty')}
-      onNext={() => { if (cropId) { chooseCrop(cropId); continueTo(5); } }}>
+    <FlowScreen step={4} action={strings.generate} disabled={!canGenerate}
+      onNext={() => { if (canGenerate && cropId) { chooseCrop(cropId); continueTo(5); } }}>
       {(inset) => <>
         <Backdrop image={pictures.field} kind="field" />
-        <FlatList data={state === 'ready' ? crops : []} keyExtractor={(item) => item.id}
-          contentContainerStyle={[styles.content, { paddingTop: inset.top, paddingBottom: inset.bottom }]}
-          keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={query.isRefetching || categories.isRefetching} onRefresh={refresh} colors={[colors.accent]} tintColor={colors.accent} />}
-          onEndReached={query.isFetchNextPageError ? undefined : more} onEndReachedThreshold={.35}
-          ListHeaderComponent={<View style={styles.header}>
-            <Surface style={styles.dates}>
-              <DateField value={date} onChange={setDate} />
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.presets}>
-                {presets.map((offset, index) => <Chip key={offset} label={strings.presets[index]} onPress={() => { tap(); setDate(calendarDate(new Date(), offset)); }} />)}
-              </ScrollView>
-            </Surface>
-            <Feedback state={categoryState} layout="map" onRetry={() => void categories.refetch()}>
-              <Segmented scroll items={[{ id: '', label: strings.all }, ...(categories.data ?? [])]} value={choice}
-                onChange={(id) => { tap(); setChoice(id); }} />
-            </Feedback>
-            <SearchField accessibilityLabel={strings.searchCrop} placeholder={strings.searchCrop} value={search} onChangeText={setSearch} />
-          </View>}
-          renderItem={({ item }) => (
-            <CropCard category={item.category} name={item.name} cropYield={item.cropYield} water={item.water}
-              waterLabel={item.waterLabel} selected={item.id === cropId} onPress={() => { tap(); chooseCrop(item.id); }} />
-          )}
-          ListEmptyComponent={<Feedback state={state} layout="crop" emptyTitle={strings.noCrop} emptyHint={strings.noCropHint}
-            onRetry={state === 'empty' && (search || choice) ? undefined : refresh} />}
-          ListFooterComponent={state === 'ready' && query.hasNextPage ? (
-            query.isFetchingNextPage ? <Feedback state="loading" layout="crop" /> :
-            <Chip label={query.isFetchNextPageError ? strings.tryAgain : strings.loadMore} onPress={more} />
-          ) : undefined}
-        />
+        <ScrollFrame bottom={inset.bottom}>
+          <FlatList data={state === 'ready' ? crops : []} keyExtractor={(item) => item.id}
+            contentContainerStyle={[styles.content, { paddingTop: inset.top }]}
+            keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={query.isRefetching || categories.isRefetching} onRefresh={refresh} colors={[colors.accent]} tintColor={colors.accent} />}
+            onEndReached={query.isFetchNextPageError ? undefined : more} onEndReachedThreshold={.35}
+            ListHeaderComponent={<View style={styles.header}>
+              <Surface style={styles.dates}>
+                <DateField value={date} onChange={setDate} />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.presets}>
+                  {presets.map((getDate, index) => <Chip key={strings.presets[index]} label={strings.presets[index]} onPress={() => { tap(); setDate(getDate()); }} />)}
+                </ScrollView>
+              </Surface>
+              <Feedback state={categoryState} layout="map" onRetry={() => void categories.refetch()}>
+                <Segmented scroll items={[{ id: '', label: strings.all }, ...(categories.data ?? [])]} value={choice}
+                  onChange={(id) => { tap(); setChoice(id); }} />
+              </Feedback>
+              <SearchField accessibilityLabel={strings.searchCrop} placeholder={strings.searchCrop} value={search} onChangeText={setSearch} />
+            </View>}
+            renderItem={({ item }) => (
+              <CropCard category={item.category} name={item.name} cropYield={item.cropYield} water={item.water}
+                waterLabel={item.waterLabel} selected={item.id === cropId} onPress={() => { tap(); chooseCrop(item.id); }} />
+            )}
+            ListEmptyComponent={<Feedback state={state} layout="crop" emptyTitle={strings.noCrop} emptyHint={strings.noCropHint}
+              onRetry={state === 'empty' && (search || choice) ? undefined : refresh} />}
+            ListFooterComponent={state === 'ready' && query.hasNextPage ? (
+              query.isFetchingNextPage ? <Feedback state="loading" layout="crop" /> :
+              <Chip label={query.isFetchNextPageError ? strings.tryAgain : strings.loadMore} onPress={more} />
+            ) : undefined}
+          />
+        </ScrollFrame>
       </>}
     </FlowScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { paddingHorizontal: space.gutter, gap: space.md },
+  content: { paddingHorizontal: space.gutter, paddingBottom: space.lg, gap: space.md },
   header: { gap: space.md },
   dates: { padding: space.lg, gap: space.md },
   presets: { gap: space.sm },

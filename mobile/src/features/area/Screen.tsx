@@ -13,7 +13,7 @@ import { colors, size, space } from '@/theme/tokens';
 import { tap } from '@/utils/haptics';
 import { continueTo, FlowScreen, ScreenScroll } from '../planner/FlowScreen';
 import { useFieldMap, useMeasurement, usePlaces } from './hooks';
-import { polygonArea } from './model';
+import { isValidBoundary } from './model';
 
 export default function AreaScreen() {
   const country = usePlanner((draft) => draft.countryId);
@@ -29,8 +29,15 @@ export default function AreaScreen() {
   const [place, setPlace] = useState('');
   const focus = useSearchFocus();
   const placeQuery = useDebouncedValue(place.trim());
-  const places = usePlaces(country, placeQuery, focus.focused);
-  const canClose = !closed && polygonArea(points) > 0;
+  const placeSettled = place.trim() === placeQuery;
+  const places = usePlaces(country, placeQuery, focus.focused && placeSettled);
+  const results = placeSettled ? places.data ?? [] : [];
+  const selectPlace = (id: string) => {
+    const match = results.find((item) => item.id === id);
+    if (match) { setPlace(match.name); focus.dismiss(); }
+  };
+  const valid = useMemo(() => isValidBoundary(points), [points]);
+  const canClose = !closed && valid;
   const refreshing = map.isRefetching || (closed && measurement.isRefetching);
   const refresh = () => {
     void map.refetch();
@@ -41,25 +48,26 @@ export default function AreaScreen() {
     <FlowScreen step={2} action={strings.next} disabled={state !== 'ready' || !closed || measureState !== 'ready'}
       busy={closed && measureState === 'loading'} onNext={() => continueTo(3)}>
       {(inset) => state === 'ready' && map.data ?
-        <FieldMap image={map.data.image} points={points} closed={closed} canClose={canClose} top={inset.top} bottom={inset.bottom}
-          onPoint={(point) => { tap(); addPoint(point); }}
+        <FieldMap image={map.data.image} points={points} closed={closed} canClose={canClose} invalidBoundary={!closed && points.length >= 3 && !valid} top={inset.top} bottom={inset.bottom}
+          onPoint={(point) => {
+            if (focus.focused) { focus.dismiss(); return; }
+            if (!closed) { tap(); addPoint(point); }
+          }}
           onClose={() => { tap(); close(); }} onReset={() => { tap(); clearField(); }}
-          onRefresh={refresh}
-          search={<>
+          onRefresh={focus.focused ? focus.dismiss : refresh}
+          search={<View {...focus.panelProps}>
             <SearchField glassy compact accessibilityLabel={strings.place} placeholder={strings.place} value={place}
-              onFocus={focus.onFocus} onBlur={focus.onBlur} onChangeText={setPlace} />
-            {focus.focused && place.trim() && <View style={styles.results}>
-              {places.isError ? <Feedback state="error" layout="map" onRetry={() => void places.refetch()} /> :
-                <Suggestions items={places.data?.map((item) => ({ id: item.id, label: item.name })) ?? []}
-                  message={places.isPending || place.trim() !== placeQuery ? strings.loading : places.data?.length ? undefined : strings.noMatch}
-                  onSelect={(id) => {
-                    const match = places.data?.find((item) => item.id === id);
-                    if (match) { setPlace(match.name); focus.dismiss(); }
-                  }} />}
+              onFocus={focus.open} onPressIn={focus.open} onChangeText={setPlace}
+              returnKeyType="search" submitBehavior="submit" onSubmitEditing={() => { if (results.length === 1) selectPlace(results[0].id); }} />
+            {focus.focused && !!place.trim() && <View style={styles.results}>
+              {placeSettled && places.isError && !results.length ? <Feedback state="error" layout="map" onRetry={() => void places.refetch()} /> :
+                <Suggestions items={results.map((item) => ({ id: item.id, label: item.name }))}
+                  message={!placeSettled || places.isPending ? strings.loading : results.length ? undefined : strings.noMatch}
+                  onSelect={selectPlace} />}
             </View>}
-          </>}
+          </View>}
           metrics={closed && measureState !== 'ready' ?
-            <Feedback state={measureState} layout="plan" onRetry={() => void measurement.refetch()} /> :
+            <Feedback state={measureState} layout="metrics" onRetry={() => void measurement.refetch()} /> :
             <View style={styles.metrics}>
               <Stat label={strings.hectares} value={measurement.data?.hectares ?? '0'} tile large accent={closed} muted={!closed} style={styles.largeTile} />
               <Stat label={strings.acres} value={measurement.data?.acres ?? '0'} tile style={styles.tile} />

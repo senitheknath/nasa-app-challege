@@ -8,3 +8,10 @@ export type StrategyDto = z.infer<typeof strategySchema>;
 export type Strategy = { id: string; tag: string; title: string; description: string; requiresCrop: boolean };
 export const mapStrategy = ({ id, tag, title, description, requiresCrop }: StrategyDto): Strategy =>
   ({ id, tag, title, description, requiresCrop });
+
+export function getSelectedStrategy(strategies: readonly Strategy[] = [], selectedId?: string | null, defaultId?: string): Strategy | undefined {
+  return strategies.find((strategy) => strategy.id === selectedId)
+    ?? strategies.find((strategy) => strategy.id === defaultId)
+    ?? strategies.find((strategy) => strategy.id === 'standing')
+    ?? strategies[0];
+}

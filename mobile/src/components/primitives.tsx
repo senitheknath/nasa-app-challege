@@ -1,8 +1,8 @@
 import { BlurView } from 'expo-blur';
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-  type TextInputProps, type TextProps, type ViewStyle, type StyleProp,
+  type TextInputProps, type TextProps, type TextStyle, type ViewStyle, type StyleProp,
 } from 'react-native';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { strings } from '@/i18n/strings';
@@ -85,7 +85,7 @@ export function Segmented({ items, value, onChange, scroll = false }: {
   items: readonly Choice[]; value: string; onChange: (id: string) => void; scroll?: boolean;
 }) {
   const choices = items.map((item) => (
-    <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: item.id === value }}
+    <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: item.id === value }} aria-selected={item.id === value}
       onPress={() => onChange(item.id)} style={[styles.segmentControl, !scroll && styles.grow]}>
       <View style={[styles.segment, item.id === value && styles.segmentActive]}>
         <Label variant="chip" tone={item.id === value ? 'cream' : 'sage'}>{item.label}</Label>
@@ -107,13 +107,16 @@ export function Chip({ label, onPress, accent }: { label: string; onPress?: () =
     : <View style={[styles.chip, accent && styles.chipAccent]}>{content}</View>;
 }
 
-export function SearchField({ glassy, compact, invalid, focused, style, ...props }: TextInputProps & { glassy?: boolean; compact?: boolean; invalid?: boolean; focused?: boolean }) {
+export function SearchField({ glassy, compact, invalid, focused, style, onFocus, onBlur, ...props }: TextInputProps & { glassy?: boolean; compact?: boolean; invalid?: boolean; focused?: boolean }) {
+  const [hasFocus, setHasFocus] = useState(false);
   return (
     <Surface kind={glassy ? 'glass' : 'card'} rounding={radius.pill}
-      style={[styles.search, glassy && !compact && styles.largeSearch, invalid ? styles.invalid : focused && styles.focused]}>
+      style={[styles.search, glassy && !compact && styles.largeSearch, invalid ? styles.invalid : (focused || hasFocus) && styles.focused]}>
       <Icon name="search" size={glassy && !compact ? icons.regular : icons.small} color={colors.sage} />
-      <TextInput {...props} placeholderTextColor={colors.sage} autoCorrect={false}
-        autoCapitalize="none" style={[styles.input, style]} />
+      <TextInput {...props} aria-invalid={invalid || undefined} placeholderTextColor={colors.sage} autoCorrect={false}
+        onFocus={(event) => { setHasFocus(true); onFocus?.(event); }}
+        onBlur={(event) => { setHasFocus(false); onBlur?.(event); }}
+        autoCapitalize="none" style={[styles.input, Platform.OS === 'web' && webSearchInput, style]} />
     </Surface>
   );
 }
@@ -163,6 +166,8 @@ export function ErrorCard({ title, hint }: { title: string; hint: string }) {
     </Surface>
   );
 }
+
+const webSearchInput: TextStyle = { outlineStyle: 'solid', outlineWidth: 0 };
 
 const styles = StyleSheet.create({
   surface: { borderWidth: size.hairline, overflow: 'hidden' },

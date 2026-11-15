@@ -7,11 +7,11 @@ export function Suggestions({ items, onSelect, message }: { items: readonly Sugg
   return (
     <Surface kind="strong" rounding={radius.card}>
       <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false} style={styles.list}>
-        {message && <Label tone="sage" style={styles.message}>{message}</Label>}
+        {!!message && <Label tone="sage" style={styles.message}>{message}</Label>}
         {items.map((item) => (
           <Pressable key={item.id} accessibilityRole="button" onPress={() => onSelect(item.id)} style={styles.item}>
             <Label variant="input" style={styles.name}>{item.label}</Label>
-            {item.detail && <Label variant="label" tone={item.accent ? 'accent' : 'sage'}>{item.detail}</Label>}
+            {!!item.detail && <Label variant="label" tone={item.accent ? 'accent' : 'sage'}>{item.detail}</Label>}
           </Pressable>
         ))}
       </ScrollView>

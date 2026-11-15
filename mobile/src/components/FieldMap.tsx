@@ -52,8 +52,8 @@ export function FieldOverlay({ points, closed, fit = false }: { points: readonly
   );
 }
 
-export function FieldMap({ image, points, closed, canClose, onPoint, onClose, onReset, top, bottom, search, metrics, onRefresh }: {
-  image: Picture; points: readonly Point[]; closed: boolean; canClose: boolean; onPoint: (point: Point) => void;
+export function FieldMap({ image, points, closed, canClose, invalidBoundary, onPoint, onClose, onReset, top, bottom, search, metrics, onRefresh }: {
+  image: Picture; points: readonly Point[]; closed: boolean; canClose: boolean; invalidBoundary?: boolean; onPoint: (point: Point) => void;
   onClose: () => void; onReset: () => void; top: number; bottom: number; search: ReactNode; metrics: ReactNode; onRefresh?: () => void;
 }) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
@@ -69,7 +69,6 @@ export function FieldMap({ image, points, closed, canClose, onPoint, onClose, on
 
   const tapGesture = useTapGesture({
     runOnJS: true,
-    enabled: !closed,
     onActivate: ({ x, y }) => {
       if (!layout.width || !layout.height || !Number.isFinite(x) || !Number.isFinite(y)) return;
       onPoint({ x: normalize(x, layout.width), y: normalize(y, layout.height) });
@@ -101,8 +100,10 @@ export function FieldMap({ image, points, closed, canClose, onPoint, onClose, on
       <View pointerEvents="box-none" style={[styles.mapLayout, { paddingTop: top, paddingBottom: bottom }]}>
         <View style={styles.searchWrap} pointerEvents="box-none">{search}</View>
         <View style={[styles.mapSpacer, layout.height >= size.roomyCanvas && styles.roomyMapSpacer]} pointerEvents="box-none">
-          {!points.length && <View style={styles.hintWrap} pointerEvents="none">
-            <Surface kind="glass" rounding={radius.tile} style={styles.hint}><Label variant="detail">{strings.drawHint}</Label></Surface>
+          {(!points.length || invalidBoundary) && <View style={styles.hintWrap} pointerEvents="none">
+            <Surface kind={invalidBoundary ? 'danger' : 'glass'} rounding={radius.tile} style={styles.hint}>
+              <Label variant="detail" accessibilityLiveRegion="polite">{invalidBoundary ? strings.invalidBoundary : strings.drawHint}</Label>
+            </Surface>
           </View>}
           <View style={styles.controls} pointerEvents="box-none">
             <IconButton label={strings.draw} name="layers" tone={closed ? 'glass' : 'accent'} onPress={closed ? onReset : () => undefined} />

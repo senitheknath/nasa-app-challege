@@ -17,9 +17,17 @@ export function formatCurrency(value: number, currency = 'LKR') {
 }
 
 export function calendarDate(date = new Date(), offset = 0) {
-  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+  const local = new Date(date);
+  local.setDate(local.getDate() + offset);
   return [String(local.getFullYear()).padStart(4, '0'), String(local.getMonth() + 1).padStart(2, '0'),
     String(local.getDate()).padStart(2, '0')].join('-');
+}
+
+export function lastYalaDate(date = new Date()) {
+  // The planner's Yala season runs from April through September.
+  const start = new Date(date);
+  start.setFullYear(date.getFullYear() - (date.getMonth() < 9 ? 1 : 0), 3, 1);
+  return calendarDate(start);
 }
 
 export function parseCalendarDate(value: string) {

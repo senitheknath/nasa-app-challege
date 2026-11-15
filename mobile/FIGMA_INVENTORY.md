@@ -6,7 +6,7 @@ The design handoff is the Figma Make export under `Downloads/project`. The scree
 | --- | --- | --- |
 | Country | Hero photo, logo, season pill, country search with suggestion list, supported and unavailable rows, no-match and country error, three stat tiles, how-it-works strip, start action | Current season, counts for crops/seasons/steps, country name and availability |
 | Mark your field | Full-bleed aerial image and grid, place search, drawing controls, open dotted and closed filled parcel, emphasized first vertex, drawing hint, metric tiles, disabled Continue until closed | Country, optional place matches, map image, field points, hectares, acres, estimated perimeter |
-| Field status | Field-size summary and three exclusive status cards, selected check or unselected arrow | Hectares, strategy id, tag, title and description |
+| Field status | Field-size summary and exclusive status cards, selected check or unselected arrow. The app offers No rotation and Current crop. | Hectares, strategy id, tag, title and description |
 | Active crop | Sowing date field and three presets, scrollable category selector, search, empty crop result, selected and unselected cards | Date, category labels, crop name, category, yield and water need |
 | Rotation plan | Parcel hero, two-position sheet, Overview/Timeline switch, skeleton, sowing action, stat grid, water bar, timeline rows and notes | Boundary, hectares, strategy, first recommended sowing action, season, category, yield, water, next crop, ordered season entries |
 

@@ -30,7 +30,7 @@ export function viewState(
   hasData: boolean,
 ): LoadState {
   if (offline || query.isPaused) return 'offline';
-  if (query.isPending) return 'loading';
   if (query.isError && !hasData) return 'error';
+  if (query.isPending) return 'loading';
   return hasData ? 'ready' : 'empty';
 }

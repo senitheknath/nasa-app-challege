@@ -72,7 +72,7 @@ export default function Gallery() {
           <Stat label={strings.km} value="0" tile muted />
         </View>
         {[0, selectedCrop.water, 100].map((value) => <Progress key={value} label={strings.waterNeed} value={value} />)}
-        {strategies.map((strategy, index) => <StrategyCard key={strategy.id} {...strategy} selected={index === 2} onPress={noop} />)}
+        {strategies.map((strategy) => <StrategyCard key={strategy.id} {...strategy} selected={strategy.id === 'standing'} onPress={noop} />)}
         {[true, false].map((selected) => <CropCard key={String(selected)} {...selectedCrop} selected={selected} onPress={noop} />)}
         <Label variant="title">{strings.galleryLabels[4]}</Label>
         <View style={styles.demoMap}>
