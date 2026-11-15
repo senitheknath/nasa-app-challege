@@ -1,9 +1,13 @@
 """3D Field Slab assembly combining Atmosphere, Canopy, 5x5 Terrain Mesh, and 4-Horizon Soil Profile."""
 from __future__ import annotations
 
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import math
 from typing import Any
 
+from agroshift.earth_data.cache import get_cached
 from agroshift.earth_data.satellite import fetch_satellite_overpasses
 from agroshift.monitoring.processors import (
     compute_layer_update_frequencies,
@@ -14,7 +18,9 @@ from agroshift.monitoring.processors import (
 
 try:
     from agroshift.monitoring.processors import (
+        ProgressiveFusionAccumulator,
         downscale_moisture_to_parcel_grid,
+        fuse_progressive_steps,
         fuse_soil_wetness_3way,
     )
 except ImportError:
@@ -35,6 +41,55 @@ except ImportError:
             "variance_reduction_pct": round(var_red, 1),
         }
 
+    def fuse_progressive_steps(steps: list[tuple[str, float, float]]) -> dict[str, Any]:
+        acc_steps: list[dict[str, Any]] = []
+        precision_sum = 0.0
+        weighted_sum = 0.0
+        min_sig = float("inf")
+        sources: list[str] = []
+        for idx, (src, val, sig) in enumerate(steps, start=1):
+            w = 1.0 / (float(sig) * float(sig))
+            precision_sum += w
+            weighted_sum += w * float(val)
+            min_sig = min(min_sig, float(sig))
+            sources.append(str(src))
+            fused_val = weighted_sum / precision_sum
+            fused_var = 1.0 / precision_sum
+            fused_sig = math.sqrt(fused_var)
+            var_red = (1.0 - fused_var / (min_sig * min_sig)) * 100.0
+            acc_steps.append(
+                {
+                    "step": idx,
+                    "source": str(src),
+                    "input_value": round(float(val), 2),
+                    "input_sigma": round(float(sig), 2),
+                    "fused_value": round(fused_val, 2),
+                    "fused_sigma": round(fused_sig, 2),
+                    "variance_reduction_pct": round(var_red, 1),
+                }
+            )
+        last = acc_steps[-1]
+        return {
+            "fused_value": last["fused_value"],
+            "fused_sigma": last["fused_sigma"],
+            "min_input_sigma": round(min_sig, 2),
+            "variance_reduction_pct": last["variance_reduction_pct"],
+            "sensor_count": len(acc_steps),
+            "sources_used": sources,
+            "convergence_steps": acc_steps,
+        }
+
+    class ProgressiveFusionAccumulator:  # type: ignore[no-redef]
+        def __init__(self) -> None:
+            self._steps: list[tuple[str, float, float]] = []
+
+        def update(self, source_name: str, value: float, sigma: float) -> dict[str, Any]:
+            self._steps.append((source_name, float(value), float(sigma)))
+            return fuse_progressive_steps(self._steps)["convergence_steps"][-1]
+
+        def result(self) -> dict[str, Any]:
+            return fuse_progressive_steps(self._steps)
+
     def fuse_soil_wetness_3way(
         s1_sar_moisture_pct: float,
         s2_ndmi_moisture_pct: float | None,
@@ -44,10 +99,14 @@ except ImportError:
         s2_sigma: float = 5.0,
         prior_sigma: float = 6.0,
     ) -> dict[str, Any]:
-        meas = [(s1_sar_moisture_pct, s1_sigma), (fao_smap_prior_pct, prior_sigma)]
+        steps: list[tuple[str, float, float]] = [
+            ("fao56_smap_prior", float(fao_smap_prior_pct), float(prior_sigma)),
+            ("sentinel1_sar", float(s1_sar_moisture_pct), float(s1_sigma)),
+        ]
         if s2_ndmi_moisture_pct is not None:
-            meas.append((s2_ndmi_moisture_pct, s2_sigma))
-        return _fuse_inverse_variance_fallback(meas)
+            steps.append(("sentinel2_ndmi", float(s2_ndmi_moisture_pct), float(s2_sigma)))
+        res = fuse_progressive_steps(steps)
+        return {**res, "fused_moisture_pct": res["fused_value"]}
 
     def downscale_moisture_to_parcel_grid(
         coarse_moisture_pct: float,
@@ -182,6 +241,29 @@ def _synthesize_5x5_elevations(
     return elevs
 
 
+def _extract_autofill_hints(precomputed_autofill: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract optional soil pH and terrain elevation/slope/drainage hints from precomputed autofill."""
+    if not isinstance(precomputed_autofill, dict):
+        return {}
+    af = precomputed_autofill.get("autofill", precomputed_autofill)
+    if not isinstance(af, dict):
+        return {}
+    ph_val = (af.get("ph") or {}).get("value") if isinstance(af.get("ph"), dict) else None
+    drain = af.get("drainage") if isinstance(af.get("drainage"), dict) else {}
+    drain_val = drain.get("value")
+    if drain_val == "unknown":
+        drain_val = None
+    slope_val = drain.get("slope_pct")
+    if slope_val is None:
+        slope_val = drain.get("regional_slope_pct")
+    return {
+        "ph": ph_val,
+        "drainage": drain_val,
+        "elevation_m": drain.get("elevation_m"),
+        "regional_slope_pct": slope_val,
+    }
+
+
 def _build_terrain_3d_mesh(
     latitude: float,
     longitude: float,
@@ -189,6 +271,8 @@ def _build_terrain_3d_mesh(
     boundary: Any = None,
     area_ha: float | None = None,
     offline: bool = False,
+    synthesize_only: bool = False,
+    precomputed_autofill: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construct a 5x5 structured 3D surface grid with runoff vectors and pooling risk."""
     from agroshift.earth_data.geometry import resolve_geometry
@@ -217,13 +301,20 @@ def _build_terrain_3d_mesh(
     grid_coords = _build_5x5_grid_coords(mesh_bbox_str)
     points = [(lat, lon) for _, _, lat, lon in grid_coords]
 
-    stencil_res = process_terrain_stencil(latitude, longitude, offline=offline)
-    stencil_val = stencil_res.get("value") if isinstance(stencil_res.get("value"), dict) else {}
+    hints = _extract_autofill_hints(precomputed_autofill)
+    stencil_res = process_terrain_stencil(latitude, longitude, offline=offline or synthesize_only)
+    stencil_val = dict(stencil_res["value"]) if isinstance(stencil_res.get("value"), dict) else {}
+    if stencil_val.get("elevation_m") is None and hints.get("elevation_m") is not None:
+        stencil_val["elevation_m"] = hints["elevation_m"]
+    if stencil_val.get("regional_slope_pct") is None and hints.get("regional_slope_pct") is not None:
+        stencil_val["regional_slope_pct"] = hints["regional_slope_pct"]
+    if not stencil_val.get("suggested_drainage_prior") and hints.get("drainage"):
+        stencil_val["suggested_drainage_prior"] = hints["drainage"]
 
     elevs: list[float] = []
     source_label = "Synthesized 5x5 micro-relief mesh anchored to regional prior"
 
-    if not offline:
+    if not offline and not synthesize_only:
         grid_res = process_terrain_grid(points, offline=False)
         grid_val = grid_res.get("value") if isinstance(grid_res.get("value"), dict) else {}
         verts = grid_val.get("vertices") if isinstance(grid_val.get("vertices"), list) else []
@@ -328,28 +419,47 @@ def _build_terrain_3d_mesh(
     }
 
 
-def _build_soil_3d_horizons(
+def _fetch_soil_sources(
     latitude: float,
     longitude: float,
+    *,
+    offline: bool,
+    skip_wcs: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Retrieve SoilGrids WCS layers and fallback REST/regional profile without redundant network calls."""
+    if skip_wcs:
+        wcs_layers: dict[str, Any] = {}
+    else:
+        wcs = process_soil_3d_profile(
+            latitude,
+            longitude,
+            properties=("phh2o", "clay", "sand", "silt", "soc"),
+            depths=("0-5cm", "5-15cm", "15-30cm"),
+            quantiles=("mean",),
+            offline=offline,
+        )
+        wcs_layers = wcs.get("layers_by_depth", {}) if wcs.get("status") == "verified" else {}
+
+    rest_profile = fetch_soil_profile(
+        latitude,
+        longitude,
+        allow_network=not offline and not bool(wcs_layers),
+    )
+    return wcs_layers, rest_profile
+
+
+def _assemble_soil_horizons(
+    wcs_layers: dict[str, Any],
+    rest_profile: dict[str, Any],
     *,
     active_root_depth_m: float,
     drainage_prior: str,
     rainfall_mm_day: float,
-    offline: bool,
+    precomputed_autofill: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build 4 vertical soil horizons combining SoilGrids properties, Saxton-Rawls hydraulics, and root presence."""
-    wcs = process_soil_3d_profile(
-        latitude,
-        longitude,
-        properties=("phh2o", "clay", "sand", "silt", "soc"),
-        depths=("0-5cm", "5-15cm", "15-30cm"),
-        quantiles=("mean",),
-        offline=offline,
-    )
-    wcs_layers = wcs.get("layers_by_depth", {}) if wcs.get("status") == "verified" else {}
-    rest_profile = fetch_soil_profile(latitude, longitude, allow_network=not offline)
-
-    base_ph = float(rest_profile.get("ph_median") or 6.2)
+    """Assemble 4 vertical soil horizons in-memory from fetched SoilGrids/REST profiles and drainage prior."""
+    hints = _extract_autofill_hints(precomputed_autofill)
+    base_ph = float(hints["ph"] if (not wcs_layers and hints.get("ph") is not None) else (rest_profile.get("ph_median") or 6.2))
     base_sand = float(rest_profile.get("sand_pct") or 46.0)
     base_clay = float(rest_profile.get("clay_pct") or 26.0)
     base_soc = float(rest_profile.get("soc_g_kg") or 12.0)
@@ -396,37 +506,89 @@ def _build_soil_3d_horizons(
     return horizons
 
 
-def build_3d_field_slab(
+def _build_soil_3d_horizons(
     latitude: float,
     longitude: float,
-    country: str = "LK",
     *,
-    boundary: Any = None,
-    area_ha: float | None = None,
-    dataset: Any = None,
-    active_root_depth_m: float = 0.45,
-    ndvi_current: float = 0.58,
-    offline: bool = False,
-) -> dict[str, Any]:
-    """Assemble a complete 3D Field Slab (atmosphere, canopy, 5x5 terrain mesh, 4 soil horizons, update frequencies)."""
-    from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
+    active_root_depth_m: float,
+    drainage_prior: str,
+    rainfall_mm_day: float,
+    offline: bool,
+    skip_wcs: bool = False,
+    precomputed_autofill: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build 4 vertical soil horizons combining SoilGrids properties, Saxton-Rawls hydraulics, and root presence."""
+    wcs_layers, rest_profile = _fetch_soil_sources(
+        latitude,
+        longitude,
+        offline=offline,
+        skip_wcs=skip_wcs,
+    )
+    return _assemble_soil_horizons(
+        wcs_layers,
+        rest_profile,
+        active_root_depth_m=active_root_depth_m,
+        drainage_prior=drainage_prior,
+        rainfall_mm_day=rainfall_mm_day,
+        precomputed_autofill=precomputed_autofill,
+    )
 
-    coordinates(latitude, longitude)
-    lat, lon = float(latitude), float(longitude)
-    norm_boundary = normalize_boundary(boundary)
-    geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
 
-    atmosphere_layer = _build_atmosphere_layer(lat, dataset)
+def _get_cached_overpasses_or_offline(
+    lat: float,
+    lon: float,
+    *,
+    norm_boundary: Any,
+    area_ha: float | None,
+    offline: bool,
+) -> tuple[dict[str, Any], bool]:
+    """Return cached overpasses from geo_cache if available, otherwise offline overpass placeholder (<1ms)."""
+    from agroshift.earth_data.geometry import resolve_geometry
+
+    if not offline:
+        sat_geom = resolve_geometry("satellite_cmr", lat, lon, boundary=norm_boundary, area_ha=area_ha)
+        cache_type = f"satellite_overpass:{sat_geom['cache_suffix']}"
+        cached = get_cached(cache_type, lat, lon)
+        if cached and isinstance(cached.get("data"), dict):
+            data = dict(cached["data"])
+            if "layer_update_frequencies" not in data:
+                clouds = [
+                    a["cloud_cover_pct"]
+                    for a in data.get("acquisitions", [])
+                    if a.get("cloud_cover_pct") is not None
+                ]
+                avg_cloud = sum(clouds) / len(clouds) if clouds else 22.0
+                data["layer_update_frequencies"] = compute_layer_update_frequencies(cloud_cover_pct=avg_cloud)
+            return data, True
+
     overpasses = fetch_satellite_overpasses(
         lat,
         lon,
         boundary=norm_boundary,
         area_ha=area_ha,
-        offline=offline,
+        offline=True,
     )
-    is_bare_soil = float(ndvi_current) < 0.20
+    return overpasses, False
 
-    # Estimate ECOSTRESS canopy-air thermal stress delta (deg C) from VPD & vegetation cover
+
+def _assemble_slab_payload(
+    *,
+    lat: float,
+    lon: float,
+    country: str,
+    area_ha: float | None,
+    bounding_box: str,
+    active_root_depth_m: float,
+    ndvi_current: float,
+    offline: bool,
+    atmosphere_layer: dict[str, Any],
+    overpasses: dict[str, Any],
+    terrain_3d_mesh: dict[str, Any],
+    soil_3d_horizons: list[dict[str, Any]],
+    fusion_stage: str,
+) -> dict[str, Any]:
+    """Assemble a complete 3D slab dictionary for a given progressive fusion stage."""
+    is_bare_soil = float(ndvi_current) < 0.20
     thermal_stress_delta = round(
         max(0.2, 0.8 + 1.3 * float(atmosphere_layer["vpd_kpa"]) - 1.1 * max(0.0, float(ndvi_current))),
         2,
@@ -438,23 +600,6 @@ def build_3d_field_slab(
         "overpasses": overpasses,
     }
 
-    terrain_3d_mesh = _build_terrain_3d_mesh(
-        lat,
-        lon,
-        boundary=norm_boundary,
-        area_ha=area_ha,
-        offline=offline,
-    )
-
-    soil_3d_horizons = _build_soil_3d_horizons(
-        lat,
-        lon,
-        active_root_depth_m=active_root_depth_m,
-        drainage_prior=terrain_3d_mesh["suggested_drainage_prior"],
-        rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
-        offline=offline,
-    )
-
     clouds = [a["cloud_cover_pct"] for a in overpasses.get("acquisitions", []) if a.get("cloud_cover_pct") is not None]
     avg_cloud = sum(clouds) / len(clouds) if clouds else 22.0
     update_frequencies = compute_layer_update_frequencies(
@@ -462,7 +607,8 @@ def build_3d_field_slab(
         is_bare_soil=is_bare_soil,
     )
 
-    verts = terrain_3d_mesh["vertices"]
+    mesh_copy = deepcopy(terrain_3d_mesh)
+    verts = mesh_copy["vertices"]
     wetness_grid = [float(v["s1_s2_wetness_idx"]) for v in verts]
     twi_grid = [float(v["twi"]) for v in verts]
     mean_wet_idx = sum(wetness_grid) / max(1, len(wetness_grid))
@@ -474,11 +620,24 @@ def build_3d_field_slab(
         if avg_cloud < 85.0
         else None
     )
-    moisture_fusion_3way = fuse_soil_wetness_3way(
-        s1_sar_moisture_pct,
-        s2_ndmi_moisture_pct,
-        fao_smap_prior_pct,
-    )
+
+    if fusion_stage == "stage_0_prior":
+        acc = ProgressiveFusionAccumulator()
+        acc.update("fao56_smap_prior", fao_smap_prior_pct, 6.0)
+        fused = acc.result()
+        moisture_fusion_3way = {**fused, "fused_moisture_pct": fused["fused_value"]}
+    elif fusion_stage == "stage_1_sar_terrain":
+        acc = ProgressiveFusionAccumulator()
+        acc.update("fao56_smap_prior", fao_smap_prior_pct, 6.0)
+        acc.update("sentinel1_sar", s1_sar_moisture_pct, 4.5)
+        fused = acc.result()
+        moisture_fusion_3way = {**fused, "fused_moisture_pct": fused["fused_value"]}
+    else:
+        moisture_fusion_3way = fuse_soil_wetness_3way(
+            s1_sar_moisture_pct,
+            s2_ndmi_moisture_pct,
+            fao_smap_prior_pct,
+        )
 
     downscaled_grid = downscale_moisture_to_parcel_grid(
         float(moisture_fusion_3way["fused_value"]),
@@ -504,6 +663,8 @@ def build_3d_field_slab(
             "SOILGRIDS_250M",
             "NASA_POWER_SMAP_GPM",
         ],
+        "fusion_stage": fusion_stage,
+        "convergence_steps": moisture_fusion_3way["convergence_steps"],
         "moisture_fusion_3way": moisture_fusion_3way,
         "combined_parcel_dt_days": combined_parcel_dt_days,
         "parcel_mean_moisture_conserved_pct": parcel_mean_moisture_conserved_pct,
@@ -515,14 +676,290 @@ def build_3d_field_slab(
             "latitude": round(lat, 5),
             "longitude": round(lon, 5),
             "area_ha": area_ha,
-            "bounding_box": geom["bbox"],
+            "bounding_box": bounding_box,
         },
         "active_root_depth_m": round(float(active_root_depth_m), 2),
         "offline": bool(offline),
         "atmosphere_layer": atmosphere_layer,
         "canopy_layer": canopy_layer,
-        "terrain_3d_mesh": terrain_3d_mesh,
+        "terrain_3d_mesh": mesh_copy,
         "soil_3d_horizons": soil_3d_horizons,
         "update_frequencies": update_frequencies,
         "sensor_fusion": sensor_fusion,
     }
+
+
+def build_3d_field_slab(
+    latitude: float,
+    longitude: float,
+    country: str = "LK",
+    *,
+    boundary: Any = None,
+    area_ha: float | None = None,
+    dataset: Any = None,
+    active_root_depth_m: float = 0.45,
+    ndvi_current: float = 0.58,
+    offline: bool = False,
+    stage: str = "full",
+    precomputed_autofill: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble a complete 3D Field Slab (atmosphere, canopy, 5x5 terrain mesh, 4 soil horizons, update frequencies)."""
+    from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
+
+    if stage not in ("fast", "full"):
+        raise ValueError(f"Unsupported stage {stage!r}; expected 'fast' or 'full'.")
+
+    coordinates(latitude, longitude)
+    lat, lon = float(latitude), float(longitude)
+    norm_boundary = normalize_boundary(boundary)
+    geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
+    atmosphere_layer = _build_atmosphere_layer(lat, dataset)
+
+    if stage == "fast":
+        overpasses, had_cached_overpasses = _get_cached_overpasses_or_offline(
+            lat,
+            lon,
+            norm_boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=offline,
+        )
+        terrain_3d_mesh = _build_terrain_3d_mesh(
+            lat,
+            lon,
+            boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=True,
+            synthesize_only=True,
+            precomputed_autofill=precomputed_autofill,
+        )
+        soil_3d_horizons = _build_soil_3d_horizons(
+            lat,
+            lon,
+            active_root_depth_m=active_root_depth_m,
+            drainage_prior=terrain_3d_mesh["suggested_drainage_prior"],
+            rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
+            offline=True,
+            skip_wcs=True,
+            precomputed_autofill=precomputed_autofill,
+        )
+        fusion_stage = (
+            "stage_1_sar_terrain"
+            if (had_cached_overpasses and overpasses.get("acquisitions"))
+            else "stage_0_prior"
+        )
+        return _assemble_slab_payload(
+            lat=lat,
+            lon=lon,
+            country=country,
+            area_ha=area_ha,
+            bounding_box=geom["bbox"],
+            active_root_depth_m=active_root_depth_m,
+            ndvi_current=ndvi_current,
+            offline=offline,
+            atmosphere_layer=atmosphere_layer,
+            overpasses=overpasses,
+            terrain_3d_mesh=terrain_3d_mesh,
+            soil_3d_horizons=soil_3d_horizons,
+            fusion_stage=fusion_stage,
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        overpass_fut = pool.submit(
+            fetch_satellite_overpasses,
+            lat,
+            lon,
+            boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=offline,
+        )
+        terrain_fut = pool.submit(
+            _build_terrain_3d_mesh,
+            lat,
+            lon,
+            boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=offline,
+            precomputed_autofill=precomputed_autofill,
+        )
+        soil_fut = pool.submit(
+            _fetch_soil_sources,
+            lat,
+            lon,
+            offline=offline,
+        )
+        overpasses = overpass_fut.result()
+        terrain_3d_mesh = terrain_fut.result()
+        wcs_layers, rest_profile = soil_fut.result()
+
+    soil_3d_horizons = _assemble_soil_horizons(
+        wcs_layers,
+        rest_profile,
+        active_root_depth_m=active_root_depth_m,
+        drainage_prior=terrain_3d_mesh["suggested_drainage_prior"],
+        rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
+        precomputed_autofill=precomputed_autofill,
+    )
+    return _assemble_slab_payload(
+        lat=lat,
+        lon=lon,
+        country=country,
+        area_ha=area_ha,
+        bounding_box=geom["bbox"],
+        active_root_depth_m=active_root_depth_m,
+        ndvi_current=ndvi_current,
+        offline=offline,
+        atmosphere_layer=atmosphere_layer,
+        overpasses=overpasses,
+        terrain_3d_mesh=terrain_3d_mesh,
+        soil_3d_horizons=soil_3d_horizons,
+        fusion_stage="stage_2_full_fusion",
+    )
+
+
+def iter_progressive_3d_field_slab(
+    latitude: float,
+    longitude: float,
+    country: str = "LK",
+    *,
+    boundary: Any = None,
+    area_ha: float | None = None,
+    dataset: Any = None,
+    active_root_depth_m: float = 0.45,
+    ndvi_current: float = 0.58,
+    offline: bool = False,
+    precomputed_autofill: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield progressive 3D Field Slab states (Stage 0 prior -> Stage 1 SAR/DEM -> Stage 2 full 3-way fusion)."""
+    from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
+
+    coordinates(latitude, longitude)
+    lat, lon = float(latitude), float(longitude)
+    norm_boundary = normalize_boundary(boundary)
+    geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
+    atmosphere_layer = _build_atmosphere_layer(lat, dataset)
+
+    # Stage 0: Immediate climate/soil priors + synthesized 5x5 relief + 1-sensor prior (sigma = 6.0%)
+    stage0_overpasses, _ = _get_cached_overpasses_or_offline(
+        lat,
+        lon,
+        norm_boundary=norm_boundary,
+        area_ha=area_ha,
+        offline=True,
+    )
+    stage0_terrain = _build_terrain_3d_mesh(
+        lat,
+        lon,
+        boundary=norm_boundary,
+        area_ha=area_ha,
+        offline=True,
+        synthesize_only=True,
+        precomputed_autofill=precomputed_autofill,
+    )
+    stage0_soil = _build_soil_3d_horizons(
+        lat,
+        lon,
+        active_root_depth_m=active_root_depth_m,
+        drainage_prior=stage0_terrain["suggested_drainage_prior"],
+        rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
+        offline=True,
+        skip_wcs=True,
+        precomputed_autofill=precomputed_autofill,
+    )
+    yield _assemble_slab_payload(
+        lat=lat,
+        lon=lon,
+        country=country,
+        area_ha=area_ha,
+        bounding_box=geom["bbox"],
+        active_root_depth_m=active_root_depth_m,
+        ndvi_current=ndvi_current,
+        offline=offline,
+        atmosphere_layer=atmosphere_layer,
+        overpasses=stage0_overpasses,
+        terrain_3d_mesh=stage0_terrain,
+        soil_3d_horizons=stage0_soil,
+        fusion_stage="stage_0_prior",
+    )
+
+    pool = ThreadPoolExecutor(max_workers=3)
+    try:
+        terrain_fut = pool.submit(
+            _build_terrain_3d_mesh,
+            lat,
+            lon,
+            boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=offline,
+            precomputed_autofill=precomputed_autofill,
+        )
+        soil_fut = pool.submit(
+            _fetch_soil_sources,
+            lat,
+            lon,
+            offline=offline,
+        )
+        overpass_fut = pool.submit(
+            fetch_satellite_overpasses,
+            lat,
+            lon,
+            boundary=norm_boundary,
+            area_ha=area_ha,
+            offline=offline,
+        )
+
+        # Stage 1: Copernicus DEM 5x5 mesh + Sentinel-1 SAR 2-sensor fusion (sigma = 3.6%) + 10m downscaling
+        stage1_terrain = terrain_fut.result()
+        stage1_soil = _build_soil_3d_horizons(
+            lat,
+            lon,
+            active_root_depth_m=active_root_depth_m,
+            drainage_prior=stage1_terrain["suggested_drainage_prior"],
+            rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
+            offline=True,
+            skip_wcs=True,
+            precomputed_autofill=precomputed_autofill,
+        )
+        yield _assemble_slab_payload(
+            lat=lat,
+            lon=lon,
+            country=country,
+            area_ha=area_ha,
+            bounding_box=geom["bbox"],
+            active_root_depth_m=active_root_depth_m,
+            ndvi_current=ndvi_current,
+            offline=offline,
+            atmosphere_layer=atmosphere_layer,
+            overpasses=stage0_overpasses,
+            terrain_3d_mesh=stage1_terrain,
+            soil_3d_horizons=stage1_soil,
+            fusion_stage="stage_1_sar_terrain",
+        )
+
+        # Stage 2: Full 3-way sensor fusion (sigma = 2.92%), 4-horizon SoilGrids WCS, and STAC/CMR overpasses
+        wcs_layers, rest_profile = soil_fut.result()
+        full_overpasses = overpass_fut.result()
+        full_soil = _assemble_soil_horizons(
+            wcs_layers,
+            rest_profile,
+            active_root_depth_m=active_root_depth_m,
+            drainage_prior=stage1_terrain["suggested_drainage_prior"],
+            rainfall_mm_day=atmosphere_layer["rainfall_mm_day"],
+            precomputed_autofill=precomputed_autofill,
+        )
+        yield _assemble_slab_payload(
+            lat=lat,
+            lon=lon,
+            country=country,
+            area_ha=area_ha,
+            bounding_box=geom["bbox"],
+            active_root_depth_m=active_root_depth_m,
+            ndvi_current=ndvi_current,
+            offline=offline,
+            atmosphere_layer=atmosphere_layer,
+            overpasses=full_overpasses,
+            terrain_3d_mesh=stage1_terrain,
+            soil_3d_horizons=full_soil,
+            fusion_stage="stage_2_full_fusion",
+        )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)

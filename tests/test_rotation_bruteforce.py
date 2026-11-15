@@ -33,7 +33,7 @@ def _assert_valid_rotation_plan(plan: dict) -> None:
     assert isinstance(timeline, dict)
     slots = timeline.get("slots")
     assert isinstance(slots, list)
-    assert len(slots) == 2
+    assert 3 <= len(slots) <= 4
     for slot in slots:
         assert isinstance(slot, dict)
         assert "crop_id" in slot

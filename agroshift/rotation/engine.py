@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Sequence
 
 from agroshift.science.climate.climate import Window
@@ -10,7 +10,12 @@ from agroshift.science.knowledge.knowledge import crop_by_id, global_traits, gro
 from agroshift.science.decision.screening import find_options
 from .contracts import CropProfile, EnvironmentContext, RotationConfig, RuleFinding, TransitionStatus
 from .rules import DEFAULT_RULES, TransitionRule
-from .timeline_adapter import build_direct_pair_timeline
+from .timeline_adapter import (
+    _build_slot_dict,
+    _cycle_bounds_from_profile,
+    _fao_stage_fractions_from_profile,
+    build_direct_pair_timeline,
+)
 
 
 def evaluate_transition(
@@ -356,6 +361,132 @@ def compute_easiness_matrix(
     }
 
 
+def _pick_followup_crop_id(
+    prev_id: str,
+    used_ids: set[str],
+    used_families: set[str],
+    follow_pool: Sequence[str],
+    profiles: dict[str, CropProfile],
+    cards_s2: dict[str, dict[str, Any]],
+    cards_s1: dict[str, dict[str, Any]],
+) -> str:
+    """Select the best follow-up crop ID preferring non-repeat, family break, and viability."""
+    if not follow_pool:
+        return prev_id
+    prev_profile = profiles[prev_id]
+    prev_family = prev_profile.family
+
+    def _rank_key(item: tuple[int, str]) -> tuple[int, int, int, int, int, int, int, int, int]:
+        idx, cid = item
+        p = profiles[cid]
+        card = cards_s2.get(cid) or cards_s1.get(cid) or {}
+        status = card.get("status")
+        viable_rank = 0 if status in {"possible", "check"} else 1
+        exact_status_rank = 0 if status == "possible" else (1 if status == "check" else 2)
+        return (
+            0 if cid != prev_id else 1,
+            0 if p.life_cycle != "perennial" else 1,
+            viable_rank,
+            0 if (p.family and prev_family and p.family != prev_family) else 1,
+            0 if cid not in used_ids else 1,
+            0 if (p.family and p.family not in used_families) else 1,
+            0 if (p.is_nitrogen_fixer and prev_profile.nutrient_demand == "heavy") else 1,
+            exact_status_rank,
+            idx,
+        )
+
+    _, best_id = min(enumerate(follow_pool), key=_rank_key)
+    return best_id
+
+
+def _extend_timeline_with_followup_crops(
+    timeline_data: dict[str, Any],
+    *,
+    c1_id: str,
+    c2_id: str,
+    follow_pool: Sequence[str],
+    profiles: dict[str, CropProfile],
+    cards_s1: dict[str, dict[str, Any]],
+    cards_s2: dict[str, dict[str, Any]],
+    include_fourth: bool,
+    monocrop_mode: bool = False,
+    turnaround_days: int = 14,
+    ref_year: int = 2024,
+) -> None:
+    """Extend a 2-slot timeline in-place with Slot 3 and optional Slot 4 crops."""
+    if monocrop_mode:
+        followup_ids = [c1_id]
+    else:
+        used_ids: set[str] = {c1_id, c2_id}
+        used_families: set[str] = {
+            f for f in (profiles[c1_id].family, profiles[c2_id].family) if f
+        }
+        c3_id = _pick_followup_crop_id(
+            c2_id, used_ids, used_families, follow_pool, profiles, cards_s2, cards_s1
+        )
+        followup_ids = [c3_id]
+        if include_fourth:
+            used_ids.add(c3_id)
+            if profiles[c3_id].family:
+                used_families.add(profiles[c3_id].family)
+            c4_id = _pick_followup_crop_id(
+                c3_id, used_ids, used_families, follow_pool, profiles, cards_s2, cards_s1
+            )
+            followup_ids.append(c4_id)
+
+    base_jan1 = date(ref_year, 1, 1)
+    min_buffer = 7
+    slots: list[dict[str, Any]] = timeline_data["slots"]
+
+    for idx, next_id in enumerate(followup_ids):
+        is_last = idx == len(followup_ids) - 1
+        prev_slot = slots[-1]
+        prev_slot["turnaround_buffer_after_days"] = turnaround_days
+
+        prev_harvest = date.fromisoformat(prev_slot["harvest_nominal_date"])
+        sowing_date = prev_harvest + timedelta(days=turnaround_days)
+        start_t = (sowing_date - base_jan1).days
+
+        p_next = profiles[next_id]
+        d_min, d_nom, d_max = _cycle_bounds_from_profile(p_next)
+        phase_fracs = _fao_stage_fractions_from_profile(p_next)
+        s_dt = base_jan1 + timedelta(days=start_t)
+        e_dt = base_jan1 + timedelta(days=start_t + d_nom)
+        window_label = f"{s_dt:%d %b} – {e_dt:%d %b}"
+
+        if not is_last:
+            latest_next_start = start_t + d_nom + turnaround_days + 21
+            deadline_t = latest_next_start - min_buffer
+            delay_slack = max(0, deadline_t - d_nom - start_t)
+            safe_expiry_t = deadline_t - d_max
+            hard_expiry_t = deadline_t - d_nom
+            turnaround_after = turnaround_days
+        else:
+            latest_start = start_t + 21
+            delay_slack = max(0, latest_start - start_t)
+            hard_expiry_t = latest_start
+            safe_expiry_t = latest_start - max(0, d_max - d_nom)
+            turnaround_after = 0
+
+        slots.append(
+            _build_slot_dict(
+                profile=p_next,
+                window_label=window_label,
+                base_jan1=base_jan1,
+                start_t=start_t,
+                d_min=d_min,
+                d_nom=d_nom,
+                d_max=d_max,
+                phase_fracs=phase_fracs,
+                delay_slack=delay_slack,
+                turnaround_buffer_after=turnaround_after,
+                safe_expiry_t=safe_expiry_t,
+                hard_expiry_t=hard_expiry_t,
+                collision_prob=0.0,
+            )
+        )
+
+
 def plan_global_rotations(
     farm: Any,
     dataset: Any,
@@ -363,8 +494,9 @@ def plan_global_rotations(
     candidate_crop_ids: list[str] | None = None,
     max_sequences: int = 16,
     config: RotationConfig = RotationConfig(),
+    strategy: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Generate constraint-based two-season crop rotation plans for any location."""
+    """Generate constraint-based multi-crop rotation plans (3–4 slots) for any location."""
     from collections import defaultdict
     from dataclasses import replace
 
@@ -443,6 +575,11 @@ def plan_global_rotations(
         )
         for cid in profile_ids
     }
+
+    follow_pool = list(dict.fromkeys(c2_pool + c1_pool))
+    monocrop_strategy = (
+        strategy == "continuous" or getattr(farm, "strategy", None) == "continuous"
+    )
 
     sequences: list[dict[str, Any]] = []
     for c1_id in c1_pool:
@@ -552,6 +689,20 @@ def plan_global_rotations(
         seq["rank"] = idx
 
     result = sequences[:max_sequences]
+    for idx, seq in enumerate(result, start=1):
+        _extend_timeline_with_followup_crops(
+            seq["timeline"],
+            c1_id=seq["season_1"]["crop_id"],
+            c2_id=seq["season_2"]["crop_id"],
+            follow_pool=follow_pool,
+            profiles=profiles,
+            cards_s1=cards_s1,
+            cards_s2=cards_s2,
+            include_fourth=(idx % 2 == 0) and not monocrop_strategy,
+            monocrop_mode=monocrop_strategy,
+        )
+        seq["name"] = " → ".join(s["crop_name"] for s in seq["timeline"]["slots"])
+
     ease_sorted = sorted(
         result,
         key=lambda r: (
