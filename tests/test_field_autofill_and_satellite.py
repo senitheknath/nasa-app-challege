@@ -60,15 +60,11 @@ def test_satellite_active_monitoring_layers():
 
 
 def test_satellite_overpasses_fetch_and_fallback():
-    # Test offline reference fallback
+    # Offline mode should not fabricate synthetic granule IDs
     res = fetch_satellite_overpasses(8.3114, 80.4037, offline=True)
-    assert res["acquisitions_count"] >= 2
-    sensors = {a["sensor"] for a in res["acquisitions"]}
-    assert "HLSL30" in sensors
-    assert "SPL3SMP_E" in sensors
-    for a in res["acquisitions"]:
-        assert a["recurrence"]
-        assert a["role"]
+    assert res["status"] == "offline"
+    assert res["acquisitions_count"] == 0
+    assert res["acquisitions"] == []
 
 
 def test_field_autofill_derivation():
@@ -135,7 +131,8 @@ def test_earth_data_api_endpoints_integration():
     assert sat_resp.status_code == 200
     sat_body = sat_resp.json()
     assert len(sat_body["layers"]) >= 3
-    assert sat_body["overpass_schedule"]["acquisitions_count"] >= 2
+    assert sat_body["overpass_schedule"]["status"] == "offline"
+    assert sat_body["overpass_schedule"]["acquisitions_count"] == 0
 
 
 def test_auth_and_farm_crud_integration(tmp_path: Path):

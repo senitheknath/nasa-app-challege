@@ -408,6 +408,12 @@ def put_refresh_policy(conn, item, pack, retrieved):
 
 
 def clear_crop_pack(conn, pack):
+    for ref_table in ("ag_growing_calendar", "ag_rotation_constraint"):
+        run(
+            conn,
+            f"DELETE FROM {ref_table} WHERE evidence_id IN (SELECT id FROM ag_evidence WHERE pack_id=?)",
+            (pack,),
+        )
     for table in (
         "ag_cultivar_trait",
         "ag_growth_stage",

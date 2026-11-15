@@ -46,6 +46,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_geo_cache_type_cell ON geo_cache(data_type, lat_cell, lon_cell)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_cache (
+                request_key TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                payload_blob BLOB NOT NULL,
+                retrieved_at TEXT NOT NULL,
+                updated_at_epoch REAL NOT NULL
+            )
+            """
+        )
 
 
 def cell_key(data_type: str, latitude: float, longitude: float, precision: int = 3) -> str:
@@ -135,3 +146,67 @@ def list_cached_types(db_path: Path = DEFAULT_DB_PATH) -> dict[str, int]:
             return {row["data_type"]: row["cnt"] for row in cursor.fetchall()}
         except Exception:
             return {}
+
+
+def get_provider_cached(
+    request_key: str,
+    *,
+    max_age_seconds: int | None = 30 * 86400,
+    db_path: Path = DEFAULT_DB_PATH,
+) -> tuple[bytes, str] | None:
+    """Return (raw_bytes, retrieved_at) from SQLite provider_cache, or None on miss/expiry."""
+    import time
+
+    with _LOCAL_LOCK:
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            row = conn.execute(
+                "SELECT payload_blob, retrieved_at, updated_at_epoch FROM provider_cache WHERE request_key = ?",
+                (request_key,),
+            ).fetchone()
+            if not row:
+                return None
+            if max_age_seconds is not None and (time.time() - float(row["updated_at_epoch"])) > max_age_seconds:
+                return None
+            return bytes(row["payload_blob"]), str(row["retrieved_at"])
+        except Exception:
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
+
+
+def set_provider_cached(
+    request_key: str,
+    url: str,
+    payload: bytes,
+    retrieved_at: str,
+    *,
+    db_path: Path = DEFAULT_DB_PATH,
+) -> None:
+    """Persist a validated provider response into SQLite provider_cache."""
+    import time
+
+    with _LOCAL_LOCK:
+        conn = None
+        try:
+            conn = get_connection(db_path)
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO provider_cache (request_key, url, payload_blob, retrieved_at, updated_at_epoch)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(request_key) DO UPDATE SET
+                        url = excluded.url,
+                        payload_blob = excluded.payload_blob,
+                        retrieved_at = excluded.retrieved_at,
+                        updated_at_epoch = excluded.updated_at_epoch
+                    """,
+                    (request_key, url, bytes(payload), retrieved_at, time.time()),
+                )
+        except Exception:
+            pass
+        finally:
+            if conn is not None:
+                conn.close()

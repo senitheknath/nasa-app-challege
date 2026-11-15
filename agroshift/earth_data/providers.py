@@ -15,6 +15,13 @@ import pycountry
 
 from agroshift.science.climate.power import DataError, coordinates
 from agroshift.earth_data.provider_http import reference
+from agroshift.monitoring.processors import (
+    _pixel_at,
+    soil_context,
+    soil_profile_wcs,
+    terrain_context,
+    terrain_grid_context,
+)
 
 _curr = Path(__file__).resolve()
 while _curr != _curr.parent:
@@ -191,46 +198,6 @@ def crop_calendars(country_code, crop_id, *, offline=False, record=False):
                      offline=offline, record=record)
 
 
-def _pixel_at(image, lat, lon):
-    tags = image.tag_v2
-    keys = tags.get(34735, ())
-    if (2048, 0, 1, 4326) not in [tuple(keys[i:i+4]) for i in range(4, len(keys), 4)]:
-        raise ValueError("Raster does not identify WGS84")
-    scale_x, scale_y, _ = tags[33550]
-    i, j, _, x, y, _ = tags[33922]
-    if not (scale_x > 0 and scale_y > 0):
-        raise ValueError("Unknown raster transform")
-    col = math.floor(i + (lon - x) / scale_x)
-    row = math.floor(j + (y - lat) / scale_y)
-    if not (0 <= col < image.width and 0 <= row < image.height):
-        raise ValueError("Point outside returned raster")
-    return image.getpixel((col, row))
-
-
-def soil_context(latitude, longitude, *, offline=False, record=False):
-    coordinates(latitude, longitude)
-    lat, lon = float(latitude), float(longitude)
-    detail = "ISRIC SoilGrids 2.0 modelled mean pH in water, 0–5 cm depth, 250 m source grid."
-    kind = "modelled"
-    if abs(lat) > 89.995 or abs(lon) > 179.995:
-        return _missing(SOIL, kind, "No soil sample at this map edge.")
-    crs = "http://www.opengis.net/def/crs/EPSG/0/4326"
-    params = {"map": "/map/phh2o.map", "SERVICE": "WCS", "VERSION": "2.0.1", "REQUEST": "GetCoverage",
-              "COVERAGEID": "phh2o_0-5cm_mean", "FORMAT": "GEOTIFF_INT16", "SCALESIZE": "x(5),y(5)",
-              "SUBSETTINGCRS": crs, "OUTPUTCRS": crs,
-              "SUBSET": [f"X({lon-.005:.7f},{lon+.005:.7f})", f"Y({lat-.005:.7f},{lat+.005:.7f})"]}
-    def parse(body):
-        with Image.open(BytesIO(body)) as grid:
-            if grid.format != "TIFF" or grid.size != (5, 5):
-                raise ValueError("Unexpected SoilGrids raster size")
-            raw = _pixel_at(grid, lat, lon)
-            if not isinstance(raw, int) or not 0 < raw <= 140 or str(raw) == str(grid.tag_v2.get(42113)):
-                raise DataError("No usable SoilGrids pH estimate at this location.")
-            return raw / 10
-    return reference(SOIL, params, parse, kind=kind, detail=detail, offline=offline, record=record,
-                     source="https://docs.isric.org/globaldata/soilgrids/WCS_from_Python.html")
-
-
 def gaez_context(country_code, crop="Wheat", *, offline=False, record=False):
     country = _country(country_code)
     def parse(body):
@@ -369,133 +336,6 @@ def gaez_polygon(boundary: dict, crop: str, water: str = "rainfed") -> dict:
             "a farm polygon reflects regional agro-ecological zone suitability rather than sub-field variation."
         ),
         "detail": center_res["detail"],
-    }
-
-
-def soil_profile_wcs(
-    latitude: float,
-    longitude: float,
-    *,
-    properties: tuple[str, ...] = ("phh2o", "clay", "sand", "silt", "soc", "bdod", "cec", "cfvo", "wv0033", "wv1500"),
-    depths: tuple[str, ...] = ("0-5cm", "5-15cm", "15-30cm"),
-    quantiles: tuple[str, ...] = ("mean", "Q0.05", "Q0.95"),
-    offline: bool = False,
-    record: bool = False,
-) -> dict:
-    """Retrieve multi-property, multi-depth ISRIC SoilGrids 2.0 WCS layers with uncertainty and pedological interpretation."""
-    from agroshift.science.soil_water.soil import SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTIES, interpret_soil_profile, normalize_soilgrids_value
-
-    coordinates(latitude, longitude)
-    lat, lon = float(latitude), float(longitude)
-    if abs(lat) > 89.995 or abs(lon) > 179.995:
-        return _missing(SOIL, "modelled", "No soil sample at this map edge.")
-
-    crs = "http://www.opengis.net/def/crs/EPSG/0/4326"
-    layers_by_depth: dict[str, dict] = {d: {} for d in depths if d in SOILGRIDS_DEPTHS}
-    provenance_cells = []
-    any_verified = False
-    retrieved_at = None
-
-    for prop in properties:
-        if prop not in SOILGRIDS_PROPERTIES:
-            continue
-        for depth in depths:
-            if depth not in SOILGRIDS_DEPTHS:
-                continue
-            q_entry = {}
-            for q in quantiles:
-                cov_id = f"{prop}_{depth}_{q}"
-                params = {
-                    "map": f"/map/{prop}.map",
-                    "SERVICE": "WCS",
-                    "VERSION": "2.0.1",
-                    "REQUEST": "GetCoverage",
-                    "COVERAGEID": cov_id,
-                    "FORMAT": "GEOTIFF_INT16",
-                    "SCALESIZE": "x(5),y(5)",
-                    "SUBSETTINGCRS": crs,
-                    "OUTPUTCRS": crs,
-                    "SUBSET": [f"X({lon-.005:.7f},{lon+.005:.7f})", f"Y({lat-.005:.7f},{lat+.005:.7f})"],
-                }
-
-                def _parse_cell(body, p_name=prop):
-                    with Image.open(BytesIO(body)) as grid:
-                        if grid.format != "TIFF" or grid.size != (5, 5):
-                            raise ValueError("Unexpected SoilGrids raster size")
-                        raw = _pixel_at(grid, lat, lon)
-                        if not isinstance(raw, int) or str(raw) == str(grid.tag_v2.get(42113)):
-                            raise DataError(f"No usable SoilGrids {p_name} estimate at this location.")
-                        norm = normalize_soilgrids_value(p_name, raw)
-                        if not norm["valid"]:
-                            raise DataError(f"Out-of-range SoilGrids {p_name} estimate.")
-                        return norm
-
-                res = reference(
-                    SOIL,
-                    params,
-                    _parse_cell,
-                    kind="modelled",
-                    detail=f"ISRIC SoilGrids 2.0 {cov_id} (250 m source grid).",
-                    offline=offline,
-                    record=record,
-                    source="https://docs.isric.org/globaldata/soilgrids/WCS_from_Python.html",
-                )
-                if res["status"] == "verified" and isinstance(res["value"], dict):
-                    any_verified = True
-                    retrieved_at = retrieved_at or res["retrieved_at"]
-                    q_entry[q] = res["value"]["normalized_value"]
-                    if q == "mean":
-                        q_entry["raw_mean"] = res["value"]["raw_value"]
-                        q_entry["original_unit"] = res["value"]["original_unit"]
-                        q_entry["normalized_unit"] = res["value"]["normalized_unit"]
-                        q_entry["conversion_method"] = res["value"]["conversion_method"]
-                    provenance_cells.append(
-                        {
-                            "coverage_id": cov_id,
-                            "access": res["access"],
-                            "retrieved_at": res["retrieved_at"],
-                            **res["value"],
-                        }
-                    )
-            if q_entry:
-                layers_by_depth[depth][prop] = q_entry
-
-    # Fallback to top-5cm pH archive if only phh2o_0-5cm_mean is archived offline
-    if not any_verified:
-        top_ph = soil_context(lat, lon, offline=offline, record=False)
-        if top_ph["status"] == "verified" and top_ph["value"] is not None:
-            any_verified = True
-            retrieved_at = top_ph["retrieved_at"]
-            raw_equiv = int(round(float(top_ph["value"]) * 10))
-            norm = normalize_soilgrids_value("phh2o", raw_equiv)
-            layers_by_depth.setdefault("0-5cm", {})["phh2o"] = {
-                "mean": norm["normalized_value"],
-                "raw_mean": norm["raw_value"],
-                "original_unit": norm["original_unit"],
-                "normalized_unit": norm["normalized_unit"],
-                "conversion_method": norm["conversion_method"],
-            }
-
-    if not any_verified:
-        return _missing(SOIL, "modelled", "No verified SoilGrids profile layers available for this request.")
-
-    interpretation = interpret_soil_profile(layers_by_depth)
-    ph_top = layers_by_depth.get("0-5cm", {}).get("phh2o", {})
-    return {
-        "status": "verified",
-        "kind": "modelled",
-        "data_category": "modelled_estimate",
-        "source": "https://docs.isric.org/globaldata/soilgrids/WCS_from_Python.html",
-        "retrieved_at": retrieved_at,
-        "access": provenance_cells[0]["access"] if provenance_cells else "archive",
-        "value": interpretation["topsoil_0_30cm"].get("ph_h2o") or ph_top.get("mean"),
-        "q05": ph_top.get("Q0.05"),
-        "q95": ph_top.get("Q0.95"),
-        "layers_by_depth": layers_by_depth,
-        "topsoil_0_30cm": interpretation["topsoil_0_30cm"],
-        "provenance_cells": provenance_cells,
-        "scientific_safeguards": interpretation["scientific_safeguards"],
-        "detail": "ISRIC SoilGrids 2.0 multi-depth WCS profile (~250 m grid). Modelled estimate, not a field soil test.",
     }
 
 
@@ -740,108 +580,6 @@ def era5_land_context(
         record=record,
         source="https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land",
     )
-
-
-def terrain_context(latitude: float, longitude: float, *, offline: bool = False, record: bool = False) -> dict:
-    """Retrieve Copernicus DEM GLO-90 (90 m) elevation and local terrain slope context."""
-    coordinates(latitude, longitude)
-    lat, lon = float(latitude), float(longitude)
-    url = "https://api.open-meteo.com/v1/elevation"
-    d = 0.00081  # ~90 m spacing
-    params = {
-        "latitude": f"{lat:.5f},{lat+d:.5f},{lat-d:.5f},{lat:.5f},{lat:.5f}",
-        "longitude": f"{lon:.5f},{lon:.5f},{lon:.5f},{lon+d:.5f},{lon-d:.5f}",
-    }
-
-    def _parse(body):
-        elevs = json.loads(body.decode("utf-8")).get("elevation", [])
-        if not isinstance(elevs, list) or len(elevs) < 5:
-            raise ValueError("Incomplete DEM response")
-        c, n, s, e, w = [float(x) for x in elevs[:5]]
-        dy_m = 2.0 * d * 111320.0
-        dx_m = max(10.0, 2.0 * d * 111320.0 * math.cos(math.radians(lat)))
-        dz_dy = (n - s) / dy_m
-        dz_dx = (e - w) / dx_m
-        slope_pct = round(math.hypot(dz_dx, dz_dy) * 100.0, 2)
-        min_nbr = min(n, s, e, w)
-        mean_nbr = (n + s + e + w) / 4.0
-        local_relief_m = round(max(0.0, c - min_nbr), 2)
-        concavity_m = round(c - mean_nbr, 2)
-        low_lying = local_relief_m <= 1.2 and slope_pct < 1.5 and concavity_m <= 0.3
-        drain_prior = "waterlogged" if low_lying else "well_drained"
-        return {
-            "elevation_m": round(c, 1),
-            "regional_slope_pct": slope_pct,
-            "local_relief_m": local_relief_m,
-            "concavity_m": concavity_m,
-            "suggested_drainage_prior": drain_prior,
-            "why_we_think_this": (
-                f"Copernicus DEM shows {c:.0f} m elevation with {slope_pct:.1f}% slope and "
-                f"{local_relief_m:.1f} m height above nearest local drainage ("
-                + ("low-lying basin — check for waterlogging" if low_lying else "sheds surface water — likely well-drained")
-                + ")."
-            ),
-            "dem_resolution_m": 90,
-            "slope_class": (
-                "flat_to_gentle (<2%)"
-                if slope_pct < 2.0
-                else ("moderate (2-8%)" if slope_pct < 8.0 else "steep (>=8%)")
-            ),
-            "scale_disclaimer": "Derived from 90 m Copernicus DEM; does not capture field-level terracing, bunds, or micro-topography.",
-        }
-
-    return reference(
-        url,
-        params,
-        _parse,
-        kind="digital_elevation_model",
-        detail="Copernicus DEM GLO-90 (~90 m) elevation, slope, and local drainage relief estimate.",
-        offline=offline,
-        record=record,
-    )
-
-
-def terrain_grid_context(
-    points: list[tuple[float, float]],
-    *,
-    offline: bool = False,
-    record: bool = False,
-) -> dict:
-    """Batch-sample Copernicus DEM GLO-90 elevation across interior polygon points in one HTTP call."""
-    if not points:
-        raise ValueError("At least one coordinate point is required.")
-    if len(points) == 1:
-        return terrain_context(points[0][0], points[0][1], offline=offline, record=record)
-    center_lat, center_lon = points[0]
-    center_res = terrain_context(center_lat, center_lon, offline=offline, record=record)
-    url = "https://api.open-meteo.com/v1/elevation"
-    params = {
-        "latitude": ",".join(f"{p[0]:.5f}" for p in points),
-        "longitude": ",".join(f"{p[1]:.5f}" for p in points),
-    }
-
-    def _parse(body):
-        elevs = [float(x) for x in json.loads(body.decode("utf-8")).get("elevation", [])]
-        if not elevs:
-            return center_res
-        merged = dict(center_res)
-        merged["elevation_m"] = round(sum(elevs) / len(elevs), 1)
-        merged["elevation_min_m"] = round(min(elevs), 1)
-        merged["elevation_max_m"] = round(max(elevs), 1)
-        merged["elevation_range_m"] = round(max(elevs) - min(elevs), 1)
-        merged["sample_points"] = len(elevs)
-        return merged
-
-    grid_res = reference(
-        url,
-        params,
-        _parse,
-        kind="digital_elevation_model",
-        detail=f"Copernicus DEM GLO-90 (~90 m) multi-point polygon sample ({len(points)} interior points).",
-        offline=offline,
-        record=record,
-    )
-    return grid_res if grid_res.get("elevation_min_m") is not None else center_res
 
 
 def seasonal_outlook_context(

@@ -66,6 +66,8 @@ class ScheduledSlot:
     turnaround_buffer_after: int
     delay_slack: int
     payload: dict[str, Any] = field(default_factory=dict)
+    latest_start: int | None = None
+    min_buffer_after: int = 0
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,8 @@ def solve_trajectories(
                 turnaround_buffer_after=0,
                 delay_slack=a.latest_start - a.earliest_start,
                 payload=a.payload,
+                latest_start=a.latest_start,
+                min_buffer_after=0,
             )
             trajectories.append(
                 Trajectory(
@@ -196,6 +200,8 @@ def solve_trajectories(
                     turnaround_buffer_after=buffer_after,
                     delay_slack=delay_slack,
                     payload=act.payload,
+                    latest_start=act.latest_start,
+                    min_buffer_after=arc.min_buffer,
                 )
             )
             curr_t = nxt_start
@@ -220,6 +226,8 @@ def solve_trajectories(
                 turnaround_buffer_after=0,
                 delay_slack=final_slack,
                 payload=final_act.payload,
+                latest_start=final_act.latest_start,
+                min_buffer_after=0,
             )
         )
 

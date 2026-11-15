@@ -181,6 +181,150 @@ def rate_rotation_sequence(
     }
 
 
+def _clamp_0_10(val: float) -> float:
+    return round(max(0.0, min(10.0, float(val))), 2)
+
+
+def compute_easiness_matrix(
+    s1_card: dict[str, Any],
+    s2_card: dict[str, Any],
+    p1: CropProfile,
+    p2: CropProfile,
+    transition: dict[str, Any],
+    timeline: dict[str, Any],
+    env: EnvironmentContext | None = None,
+) -> dict[str, Any]:
+    """Compute a 0.0-10.0 Easiness Score (10 - hardness) across 5 physical operational factors."""
+    findings = transition.get("findings", [])
+    finding_ids = {f.get("rule_id") for f in findings}
+
+    # 1. turnaround_expiry_pressure (0-10 hardness)
+    tb = timeline.get("turnaround_summary", {})
+    buffer_days = tb.get("buffer_days", 14)
+    slots = timeline.get("slots", [])
+    delay_slack = slots[0].get("delay_slack_days", 14) if slots else 14
+    collision_pct = float(timeline.get("collision_probability_pct", 0.0) or 0.0)
+
+    if buffer_days < 0:
+        f1 = 6.0
+    elif buffer_days < 7:
+        f1 = 4.5
+    elif buffer_days < 14:
+        f1 = 2.5
+    elif buffer_days <= 35:
+        f1 = 0.5
+    else:
+        f1 = 1.5
+
+    if delay_slack <= 0:
+        f1 += 2.0
+    elif delay_slack < 7:
+        f1 += 1.0
+    f1 += (collision_pct / 100.0) * 3.0
+    f1 = _clamp_0_10(f1)
+
+    # 2. earthwork_drainage_flip (0-10 hardness)
+    f2 = 1.0
+    first_conflict = p1.trait_value("persistent_waterlogging_conflict")
+    is_paddy_flip = (
+        "drainage_transition" in finding_ids
+        or (p1.id == "rice" and p2.id != "rice")
+        or (first_conflict is False and p2.waterlogging_sensitive)
+    )
+    if is_paddy_flip:
+        f2 += 6.0
+    if env is not None:
+        if env.slope_pct is not None:
+            if env.slope_pct >= 15.0:
+                f2 += 3.0
+            elif env.slope_pct >= 8.0:
+                f2 += 1.5
+            elif env.slope_pct >= 4.0:
+                f2 += 0.5
+        if env.drainage in {"poor", "very_poor"} and p2.waterlogging_sensitive:
+            f2 += 2.0
+    f2 = _clamp_0_10(f2)
+
+    # 3. water_irrigation_dependency (0-10 hardness)
+    f3 = 1.0
+    kc1 = p1.kc_max if p1.kc_max is not None else 1.0
+    kc2 = p2.kc_max if p2.kc_max is not None else 1.0
+    avg_kc = 0.5 * (kc1 + kc2)
+    if avg_kc >= 1.15:
+        f3 += 2.5
+    elif avg_kc >= 1.0:
+        f3 += 1.5
+
+    irrig = env.irrigation if env is not None else "unknown"
+    if irrig == "rainfed":
+        if "water_deficit_carryover" in finding_ids:
+            f3 += 2.5
+        if env is not None and env.rainfall_s1_mm is not None and env.water_need_s1_mm:
+            deficit_ratio = max(0.0, (env.water_need_s1_mm - env.rainfall_s1_mm) / env.water_need_s1_mm)
+            f3 += min(4.0, deficit_ratio * 6.0)
+        elif s1_card.get("status") == "check" or s2_card.get("status") == "check":
+            f3 += 2.0
+    elif irrig == "unknown":
+        f3 += 1.5
+    elif irrig in {"reliable", "irrigated"}:
+        f3 += 0.5
+    f3 = _clamp_0_10(f3)
+
+    # 4. soil_nutrient_intervention (0-10 hardness)
+    f4 = 3.0
+    if p1.is_nitrogen_fixer or p2.is_nitrogen_fixer:
+        f4 -= 2.0
+    if p1.nutrient_demand == "heavy" and p2.nutrient_demand == "heavy":
+        f4 += 4.0
+    elif p1.nutrient_demand == "heavy" or p2.nutrient_demand == "heavy":
+        f4 += 1.5
+    if env is not None and env.soil_ph is not None:
+        if env.soil_ph < 5.5 or env.soil_ph > 8.0:
+            f4 += 2.5
+        elif env.soil_ph < 5.8 or env.soil_ph > 7.6:
+            f4 += 1.0
+    if s1_card.get("status") == "check" or s2_card.get("status") == "check":
+        f4 += 0.5
+    f4 = _clamp_0_10(f4)
+
+    # 5. pest_pathogen_vigilance (0-10 hardness)
+    f5 = 1.5
+    n_shared = len(p1.pests & p2.pests) if (p1.pests and p2.pests) else 0
+    if n_shared > 0:
+        f5 += min(5.0, 2.5 + n_shared * 1.0)
+    if p1.family and p2.family and p1.family == p2.family:
+        f5 += 3.5
+    elif p1.family and p2.family and p1.family != p2.family and n_shared == 0:
+        f5 -= 1.0
+    f5 = _clamp_0_10(f5)
+
+    factors = {
+        "turnaround_expiry_pressure": f1,
+        "earthwork_drainage_flip": f2,
+        "water_irrigation_dependency": f3,
+        "soil_nutrient_intervention": f4,
+        "pest_pathogen_vigilance": f5,
+    }
+    hardness_score = round(sum(factors.values()) / 5.0, 2)
+    easiness_score = round(10.0 - hardness_score, 2)
+
+    if easiness_score >= 7.5:
+        easiness_tier = "Easy"
+    elif easiness_score >= 5.5:
+        easiness_tier = "Moderate"
+    elif easiness_score >= 3.5:
+        easiness_tier = "Demanding"
+    else:
+        easiness_tier = "Hard"
+
+    return {
+        "easiness_score": easiness_score,
+        "hardness_score": hardness_score,
+        "easiness_tier": easiness_tier,
+        "factors": factors,
+    }
+
+
 def plan_global_rotations(
     farm: Any,
     dataset: Any,
@@ -289,6 +433,12 @@ def plan_global_rotations(
             timeline_data = build_physical_timeline(trajs[0]) if trajs else {}
 
             rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
+            easiness_matrix = compute_easiness_matrix(
+                s1_card, s2_card, p1, p2, trans, timeline_data, env
+            )
+            ease_adjusted_score = round(
+                0.65 * rating_info["score"] + 3.5 * easiness_matrix["easiness_score"], 1
+            )
 
             sequences.append(
                 {
@@ -298,6 +448,8 @@ def plan_global_rotations(
                     "score": rating_info["score"],
                     "rating": rating_info["rating"],
                     "components": rating_info["components"],
+                    "easiness_matrix": easiness_matrix,
+                    "ease_adjusted_score": ease_adjusted_score,
                     "summary": trans["summary"],
                     "season_1": {
                         "window": w1.label,
@@ -333,4 +485,16 @@ def plan_global_rotations(
     for idx, seq in enumerate(sequences, start=1):
         seq["rank"] = idx
 
-    return sequences[:max_sequences]
+    result = sequences[:max_sequences]
+    ease_sorted = sorted(
+        result,
+        key=lambda r: (
+            order_map.get(r["overall_status"], 9),
+            -r["ease_adjusted_score"],
+            r["name"].casefold(),
+        ),
+    )
+    for idx, seq in enumerate(ease_sorted, start=1):
+        seq["ease_rank"] = idx
+
+    return result

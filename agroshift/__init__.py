@@ -12,7 +12,7 @@ from importlib import import_module
 import sys
 
 # Forward-compatibility subpackage exports
-from . import earth_data, identity, rotation, science
+from . import earth_data, identity, monitoring, rotation, science
 
 # Transparent alias map for legacy import compatibility
 _LEGACY_MODULE_MAP = {
@@ -68,6 +68,7 @@ for _alias, _target in _LEGACY_MODULE_MAP.items():
 __all__ = [
     "earth_data",
     "identity",
+    "monitoring",
     "rotation",
     "science",
 ]

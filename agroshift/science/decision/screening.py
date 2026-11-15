@@ -101,6 +101,10 @@ def _make_general_card(crop, traits, farm, window, daily_years, typical_day, rai
         if drainage and drainage["low"] == drainage["high"] == 1:
             status = "blocked"
             caution.append("This crop struggles where the field stays waterlogged.")
+        elif drainage and drainage["low"] == drainage["high"] == 0:
+            observed.append("Reported waterlogged/paddy drainage is compatible with this crop.")
+            if status == "unknown":
+                status = "possible"
         else:
             caution.append("Check this crop's tolerance of standing water locally.")
             if status == "possible":

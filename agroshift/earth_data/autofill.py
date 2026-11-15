@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..identity.farm_records import polygon_area_hectares
-from agroshift.earth_data.providers import soil_context, terrain_grid_context
+from agroshift.monitoring.processors import soil_context, terrain_grid_context
 from agroshift.earth_data.cache import get_cached, set_cached
 from agroshift.earth_data.geometry import normalize_boundary, resolve_geometry
 
@@ -43,14 +43,18 @@ def derive_field_autofill(
 
     # 2. Terrain & Drainage Prior (Copernicus DEM 90m, adaptive polygon grid or centroid)
     terrain_res = terrain_grid_context(terrain_geom["points"], offline=offline)
-    drainage_val = terrain_res.get("suggested_drainage_prior")
-    slope_pct = terrain_res.get("regional_slope_pct")
-    elev_m = terrain_res.get("elevation_m")
+    terrain_val = terrain_res.get("value") if isinstance(terrain_res.get("value"), dict) else terrain_res
+    drainage_val = terrain_val.get("suggested_drainage_prior") if isinstance(terrain_val, dict) else None
+    slope_pct = terrain_val.get("regional_slope_pct") if isinstance(terrain_val, dict) else None
+    elev_m = terrain_val.get("elevation_m") if isinstance(terrain_val, dict) else None
+    elev_min_m = terrain_val.get("elevation_min_m") if isinstance(terrain_val, dict) else None
+    elev_max_m = terrain_val.get("elevation_max_m") if isinstance(terrain_val, dict) else None
+    sample_points = terrain_val.get("sample_points", 1) if isinstance(terrain_val, dict) else 1
 
-    # Safe fallback if DEM is unreachable
+    # Never fabricate "well_drained" if Copernicus DEM is unreachable
     if not drainage_val:
-        drainage_val = "well_drained"
-        drainage_source = "Default prior; verify if field experiences waterlogging or ponding"
+        drainage_val = "unknown"
+        drainage_source = "Copernicus DEM unavailable; verify if field experiences waterlogging or ponding"
     else:
         drainage_source = f"Copernicus DEM 90 m (elevation {elev_m} m, slope {slope_pct}%)"
 
@@ -124,12 +128,12 @@ def derive_field_autofill(
                 "value": drainage_val,
                 "slope_pct": slope_pct,
                 "elevation_m": elev_m,
-                "elevation_min_m": terrain_res.get("elevation_min_m"),
-                "elevation_max_m": terrain_res.get("elevation_max_m"),
-                "sample_points": terrain_res.get("sample_points", 1),
+                "elevation_min_m": elev_min_m,
+                "elevation_max_m": elev_max_m,
+                "sample_points": sample_points,
                 "precision_mode": terrain_geom["active_mode"],
                 "source": drainage_source,
-                "confidence": "inferred_terrain" if slope_pct is not None else "heuristic_fallback",
+                "confidence": "inferred_terrain" if slope_pct is not None else "unavailable",
                 "can_override": True,
             },
             "area_ha": area_item,
