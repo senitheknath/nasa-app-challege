@@ -348,16 +348,16 @@ export function sampleChlorophyllUgCm2(
  * (chlorotic amber-yellow -> chartreuse -> healthy emerald -> dense deep chlorophyll green).
  */
 export function chlorophyllHeatmapFill(cabUgCm2: number, shade = 1): string {
-  const t = clamp((cabUgCm2 - 12) / 52, 0, 1);
+  const t = clamp((cabUgCm2 - 8) / 56, 0, 1);
   let r: number;
   let g: number;
   let b: number;
 
   if (t < 0.35) {
     const k = t / 0.35;
-    r = lerp(217, 234, k); // #D97706 -> #EAB308
-    g = lerp(119, 179, k);
-    b = lerp(6, 8, k);
+    r = lerp(180, 234, k); // #B45309 -> #EAB308
+    g = lerp(83, 179, k);
+    b = lerp(9, 8, k);
   } else if (t < 0.65) {
     const k = (t - 0.35) / 0.3;
     r = lerp(234, 132, k); // #EAB308 -> #84CC16

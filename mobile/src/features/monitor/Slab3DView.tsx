@@ -25,12 +25,12 @@ import {
 type HeatmapMode = 'moisture' | 'precip' | 'ph' | 'ndvi' | 'heat' | 'none';
 
 const HEATMAPS: readonly { id: HeatmapMode; label: string; minLabel: string; maxLabel: string; lowCol: string; highCol: string }[] = [
-  { id: 'moisture', label: 'Moisture', minLabel: 'Dry', maxLabel: 'Wet', lowCol: '#655A3C', highCol: '#1894AC' },
-  { id: 'precip', label: 'Precip', minLabel: 'Runoff', maxLabel: 'Pool', lowCol: '#244A64', highCol: '#38BDF8' },
-  { id: 'ph', label: 'pH', minLabel: 'Acid <5.8', maxLabel: 'Alk >7.2', lowCol: '#E07A5F', highCol: '#6366F1' },
-  { id: 'ndvi', label: 'NDVI', minLabel: 'Sparse', maxLabel: 'Vigorous', lowCol: '#8C7A42', highCol: '#4ADE80' },
-  { id: 'heat', label: 'Heat ΔT', minLabel: 'Cool', maxLabel: 'Hot', lowCol: '#22C55E', highCol: '#EF4444' },
-  { id: 'none', label: 'Terrain', minLabel: 'Valley', maxLabel: 'Ridge', lowCol: '#2C4A22', highCol: '#5C8244' },
+  { id: 'moisture', label: 'Moisture', minLabel: 'Dry', maxLabel: 'Wet', lowCol: '#B48A5A', highCol: '#0284C7' },
+  { id: 'precip', label: 'Precip', minLabel: 'Runoff', maxLabel: 'Pool', lowCol: '#64748B', highCol: '#38BDF8' },
+  { id: 'ph', label: 'pH', minLabel: 'Acid <5.8', maxLabel: 'Alk >7.2', lowCol: '#EF4444', highCol: '#6366F1' },
+  { id: 'ndvi', label: 'NDVI', minLabel: 'Sparse', maxLabel: 'Vigorous', lowCol: '#C27D38', highCol: '#16A34A' },
+  { id: 'heat', label: 'Heat ΔT', minLabel: 'Cool', maxLabel: 'Hot', lowCol: '#A4C8E1', highCol: '#EF4444' },
+  { id: 'none', label: 'Terrain', minLabel: 'Valley', maxLabel: 'Ridge', lowCol: '#3F4E3A', highCol: '#8F9E72' },
 ];
 
 const PRESETS: readonly { id: string; label: string; camera: Camera }[] = [
@@ -68,55 +68,69 @@ function terrainCellFill(
   const e = clamp(avgNormElev, 0, 1);
   const w = clamp(wetness, 0, 1);
 
-  let r = 44 + e * 48;
-  let g = 74 + e * 56;
-  let b = 34 + e * 20;
+  let r = 63 + e * 80;
+  let g = 78 + e * 80;
+  let b = 58 + e * 56;
 
   if (heatmap === 'moisture') {
-    if (w > 0.14) {
-      const wt = clamp((w - 0.14) * 1.12, 0, 0.88);
-      r = lerp(r, 24, wt);
-      g = lerp(g, 148, wt);
-      b = lerp(b, 172, wt);
+    const mt = clamp((w - 0.1) / 0.85, 0, 1);
+    if (mt < 0.5) {
+      const k = mt * 2;
+      r = lerp(180, 20, k);  // #B48A5A Dry sand -> #14B8A6 Moist teal
+      g = lerp(138, 184, k);
+      b = lerp(90, 166, k);
+    } else {
+      const k = (mt - 0.5) * 2;
+      r = lerp(20, 2, k);    // #14B8A6 -> #0284C7 Deep hydro blue
+      g = lerp(184, 132, k);
+      b = lerp(166, 199, k);
     }
   } else if (heatmap === 'precip') {
     const rainIntensity = clamp(rainMm / 12, 0.25, 1);
     const pt = clamp(w * 0.78 + (1 - e) * 0.22, 0, 1) * rainIntensity;
-    r = lerp(34, 56, pt);
-    g = lerp(64, 189, pt);
-    b = lerp(96, 248, pt);
+    r = lerp(100, 56, pt);   // #64748B Slate runoff -> #38BDF8 Sky pool
+    g = lerp(116, 189, pt);
+    b = lerp(139, 248, pt);
   } else if (heatmap === 'ph') {
     // Spatial pH variation: ridges slightly more leached/acidic, valleys slightly buffered
     const localPh = clamp(basePh + (w - 0.4) * 0.55 - (e - 0.5) * 0.4, 4.5, 8.2);
     if (localPh < 6.5) {
       const t = clamp((localPh - 4.8) / 1.7, 0, 1);
-      r = lerp(224, 62, t);
-      g = lerp(122, 168, t);
-      b = lerp(95, 108, t);
+      r = lerp(239, 34, t);  // #EF4444 Acidic red -> #22C55E Neutral green
+      g = lerp(68, 197, t);
+      b = lerp(68, 94, t);
     } else {
       const t = clamp((localPh - 6.5) / 1.5, 0, 1);
-      r = lerp(62, 99, t);
-      g = lerp(168, 102, t);
-      b = lerp(108, 241, t);
+      r = lerp(34, 99, t);   // #22C55E -> #6366F1 Alkaline indigo
+      g = lerp(197, 102, t);
+      b = lerp(94, 241, t);
     }
   } else if (heatmap === 'ndvi') {
-    const localNdvi = clamp(ndvi + (w - 0.4) * 0.18 - (e - 0.5) * 0.12, 0.15, 0.92);
-    const t = clamp((localNdvi - 0.2) / 0.65, 0, 1);
-    r = lerp(142, 64, t);
-    g = lerp(118, 210, t);
-    b = lerp(64, 114, t);
+    const localNdvi = clamp(ndvi + (w - 0.4) * 0.14 - (e - 0.5) * 0.1, 0.08, 0.92);
+    const t = clamp((localNdvi - 0.12) / 0.72, 0, 1);
+    if (t < 0.45) {
+      const k = t / 0.45;
+      r = lerp(194, 132, k); // #C27D38 Sparse/bare -> #84CC16
+      g = lerp(125, 204, k);
+      b = lerp(56, 22, k);
+    } else {
+      const k = (t - 0.45) / 0.55;
+      r = lerp(132, 22, k);  // #84CC16 -> #16A34A Vigorous emerald
+      g = lerp(204, 163, k);
+      b = lerp(22, 74, k);
+    }
   } else if (heatmap === 'heat') {
     const stressNorm = clamp((deltaT + (e - 0.45) * 1.4 - w * 1.1) / 4.2, 0, 1);
     if (stressNorm < 0.5) {
       const t = stressNorm * 2;
-      r = lerp(38, 245, t);
-      g = lerp(176, 178, t);
-      b = lerp(98, 42, t);
+      r = lerp(164, 245, t); // #A4C8E1 Cool ice blue -> #F59E0B Warm amber
+      g = lerp(200, 158, t);
+      b = lerp(225, 11, t);
     } else {
       const t = (stressNorm - 0.5) * 2;
-      r = lerp(245, 239, t);
-      g = lerp(178, 68, t);
-      b = lerp(42, 68, t);
+      r = lerp(245, 239, t); // #F59E0B -> #EF4444 Hot red
+      g = lerp(158, 68, t);
+      b = lerp(11, 68, t);
     }
   }
 
