@@ -4,6 +4,8 @@ import { formatDate, formatNumber, formatUnit, parseCalendarDate } from '@/utils
 import { fieldSchema } from '../area/model';
 import { cropSchema, mapCrop, type Crop } from '../crop/model';
 
+export type RotationFilterId = 'default' | 'water' | 'soil' | 'pest' | 'ease';
+
 export const planRequestSchema = fieldSchema.extend({
   strategyId: z.string().min(1),
   cropId: z.string().min(1).optional(),
@@ -13,6 +15,7 @@ export const planRequestSchema = fieldSchema.extend({
   boundary: z.array(z.object({ latitude: z.number(), longitude: z.number() })).optional(),
   areaHa: z.number().nullable().optional(),
   irrigation: z.enum(['rainfed', 'irrigated']).optional(),
+  customCropIds: z.array(z.string()).optional(),
 });
 
 export const stageSchema = z.object({
@@ -78,6 +81,24 @@ export const rotationOptionSchema = z.object({
   overall_status: z.string().optional(),
   summary: z.string().optional(),
   ease_adjusted_score: z.number().optional(),
+  is_custom: z.boolean().nullable().optional(),
+  filter_scores: z.record(z.string(), z.number()).nullable().optional(),
+  custom_comparison: z.object({
+    gap_pts: z.number().nullable().optional(),
+    reason: z.string().nullable().optional(),
+  }).nullable().optional(),
+  smart_swap: z.object({
+    replace_crop_id: z.string(),
+    replace_crop_name: z.string(),
+    with_crop_id: z.string(),
+    with_crop_name: z.string(),
+    gain_pts: z.number(),
+    reason: z.string(),
+  }).nullable().optional(),
+  components: z.object({
+    climate_suitability: z.number().nullable().optional(),
+    transition_synergy: z.number().nullable().optional(),
+  }).passthrough().nullable().optional(),
   transition: z.object({
     status: z.string().nullable().optional(),
     summary: z.string().nullable().optional(),
@@ -86,6 +107,11 @@ export const rotationOptionSchema = z.object({
   easiness_matrix: z.object({
     easiness_tier: z.string().nullable().optional(),
     easiness_score: z.number().nullable().optional(),
+    factors: z.object({
+      water_irrigation_dependency: z.number().nullable().optional(),
+      soil_nutrient_intervention: z.number().nullable().optional(),
+      pest_pathogen_vigilance: z.number().nullable().optional(),
+    }).passthrough().nullable().optional(),
   }).passthrough().nullable().optional(),
   timeline: z.object({
     overall_status: z.string().optional(),
@@ -211,6 +237,18 @@ export type RotationOption = {
   isBest: boolean;
   cropCount: number;
   totalDays: number;
+  isCustom: boolean;
+  filterScores: Record<RotationFilterId, number>;
+  filterBadges: Record<RotationFilterId, string>;
+  customComparison?: { gapPts: number; reason: string };
+  smartSwap?: {
+    replaceCropId: string;
+    replaceCropName: string;
+    withCropId: string;
+    withCropName: string;
+    gainPts: number;
+    reason: string;
+  };
 };
 
 export type PlanSeason = {
@@ -429,7 +467,72 @@ function mapRotation(rot: RotationOptionDto, index: number): RotationOption {
       : `${slots[0].sowingDate} – ${slots[slots.length - 1].harvestDate} · ${cropUnit}`)
     : '';
   const title = index === 0 ? 'Best Rotation' : `Alternative ${index + 1}`;
-  const badge = deriveRotationBadge(tl.slots, index);
+  const badge = rot.is_custom ? 'Custom rotation' : deriveRotationBadge(tl.slots, index);
+  const families = tl.slots
+    .map((slot) => (slot.family ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  const hasLegume = families.some((family) => family.includes('fabaceae') || family.includes('legume'));
+  const uniqueFamilies = new Set(families);
+  const filterScores: Record<RotationFilterId, number> = {
+    default: Math.round(rot.filter_scores?.default ?? rot.score),
+    water: Math.round(
+      rot.filter_scores?.water ??
+        Math.min(
+          100,
+          Math.max(
+            40,
+            (10 - (rot.easiness_matrix?.factors?.water_irrigation_dependency ?? 3.5)) * 7 +
+              (rot.components?.climate_suitability ?? 25) * 0.8,
+          ),
+        ),
+    ),
+    soil: Math.round(
+      rot.filter_scores?.soil ??
+        Math.min(
+          100,
+          Math.max(
+            40,
+            (10 - (rot.easiness_matrix?.factors?.soil_nutrient_intervention ?? 3.5)) * 7 +
+              (rot.components?.transition_synergy ?? 20),
+          ),
+        ),
+    ),
+    pest: Math.round(
+      rot.filter_scores?.pest ??
+        Math.min(
+          100,
+          Math.max(
+            40,
+            (10 - (rot.easiness_matrix?.factors?.pest_pathogen_vigilance ?? 3.0)) * 7 +
+              (rot.components?.transition_synergy ?? 20),
+          ),
+        ),
+    ),
+    ease: Math.round(rot.filter_scores?.ease ?? rot.ease_adjusted_score ?? rot.score),
+  };
+  const filterBadges: Record<RotationFilterId, string> = {
+    default: rot.is_custom ? 'Custom rotation' : index === 0 ? 'Highest yield & fit' : 'Balanced cycle',
+    water: filterScores.water >= 75 ? 'Low water · Rainfed safe' : 'Moderate water use',
+    soil: hasLegume ? '+N Fixer · Soil recovery' : 'Balanced nutrients',
+    pest: uniqueFamilies.size >= 3 ? '0 shared pests · 3+ families' : 'Family rotation break',
+    ease: `${rot.timeline?.turnaround_summary?.buffer_days ?? 14}d buffer · Easy prep`,
+  };
+  const customComparison = rot.custom_comparison
+    ? {
+        gapPts: Math.round(rot.custom_comparison.gap_pts ?? 0),
+        reason: rot.custom_comparison.reason ?? '',
+      }
+    : undefined;
+  const smartSwap = rot.smart_swap
+    ? {
+        replaceCropId: rot.smart_swap.replace_crop_id,
+        replaceCropName: rot.smart_swap.replace_crop_name,
+        withCropId: rot.smart_swap.with_crop_id,
+        withCropName: rot.smart_swap.with_crop_name,
+        gainPts: rot.smart_swap.gain_pts,
+        reason: rot.smart_swap.reason,
+      }
+    : undefined;
   return {
     id: rot.id,
     name: rot.name,
@@ -468,7 +571,51 @@ function mapRotation(rot: RotationOptionDto, index: number): RotationOption {
     isBest,
     cropCount,
     totalDays,
+    isCustom: Boolean(rot.is_custom),
+    filterScores,
+    filterBadges,
+    customComparison,
+    smartSwap,
   };
+}
+
+export function rankRotationsByFilter(
+  rotations: readonly RotationOption[],
+  filter: RotationFilterId,
+): RotationOption[] {
+  if (rotations.length === 0) return [];
+  const sorted = [...rotations].sort((a, b) => {
+    const diff = b.filterScores[filter] - a.filterScores[filter];
+    if (diff !== 0) return diff;
+    return b.score - a.score;
+  });
+  const top = sorted[0];
+  return sorted.map((r, idx) => {
+    let customComparison = r.customComparison;
+    if (r.isCustom) {
+      if (idx === 0) {
+        customComparison = {
+          gapPts: 0,
+          reason: `★ #1 Best choice for ${filter === 'default' ? 'overall fit' : filter} in this region`,
+        };
+      } else {
+        customComparison = {
+          gapPts: Math.round(r.filterScores[filter] - top.filterScores[filter]),
+          reason:
+            r.customComparison?.reason ||
+            `-${Math.round(top.filterScores[filter] - r.filterScores[filter])} pts vs #1 ${top.slots[0]?.cropName ?? ''} plan`,
+        };
+      }
+    }
+    return {
+      ...r,
+      rank: idx + 1,
+      isBest: idx === 0,
+      score: r.filterScores[filter],
+      badge: r.filterBadges[filter],
+      ...(customComparison !== undefined ? { customComparison } : {}),
+    };
+  });
 }
 
 export function mapPlan(dto: PlanDto): Plan | null {

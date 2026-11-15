@@ -89,6 +89,17 @@ type RawRotationsResponse = {
     overall_status?: string;
     summary?: string;
     ease_adjusted_score?: number;
+    is_custom?: boolean;
+    filter_scores?: Record<string, number>;
+    custom_comparison?: { gap_pts?: number; reason?: string };
+    smart_swap?: {
+      replace_crop_id: string;
+      replace_crop_name: string;
+      with_crop_id: string;
+      with_crop_name: string;
+      gain_pts: number;
+      reason: string;
+    };
     transition?: {
       status?: string | null;
       summary?: string | null;
@@ -528,6 +539,7 @@ export const endpoints = {
         start_date: body.sowingDate,
         irrigation,
         current: body.cropId ?? undefined,
+        custom_crop_ids: body.customCropIds && body.customCropIds.length > 0 ? body.customCropIds : undefined,
         max_sequences: 12,
       },
       signal,

@@ -7,9 +7,12 @@ import { Icon } from '@/components/Icon';
 import { PlanSheet } from '@/components/PlanSheet';
 import {
   AlternativesList,
+  CustomCropBuilderCard,
   FocusedCropBanner,
   RotationCarousel,
+  RotationFilterBar,
   type CarouselSlotItem,
+  type CropPickerItem,
 } from '@/components/RotationCarousel';
 import { Label, Stat, Surface } from '@/components/primitives';
 import { strings } from '@/i18n/strings';
@@ -18,11 +21,12 @@ import { colors, icons, radius, size, space } from '@/theme/tokens';
 import { formatNumber } from '@/utils/format';
 import { tap } from '@/utils/haptics';
 import { useCountryData } from '../country/hooks';
+import { useCrops } from '../crop/hooks';
 import { FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
 import { usePlan } from './hooks';
-import type { Plan, RotationOption } from './model';
+import { rankRotationsByFilter, type Plan, type RotationFilterId, type RotationOption } from './model';
 
 const tabs = [
   { id: 'overview', label: strings.overview },
@@ -57,9 +61,18 @@ function buildFallbackSlots(plan: Plan): CarouselSlotItem[] {
   }));
 }
 
+const FILTER_LABELS: Record<RotationFilterId, string> = {
+  default: 'Best Match',
+  water: 'Water Saving',
+  soil: 'Soil & Nitrogen',
+  pest: 'Pest Break',
+  ease: 'Easy Cycle',
+};
+
 function Overview({
   plan,
   rotation,
+  activeFilter,
   slots,
   focusedIndex,
   hasInteracted,
@@ -69,6 +82,7 @@ function Overview({
 }: {
   plan: Plan;
   rotation?: RotationOption;
+  activeFilter: RotationFilterId;
   slots: readonly CarouselSlotItem[];
   focusedIndex: number;
   hasInteracted: boolean;
@@ -81,9 +95,13 @@ function Overview({
   const focusedSlot = slots[Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)))];
 
   const isBest = Boolean(rotation?.isBest || rotation?.rank === 1);
-  const rankBadge = isBest
-    ? '★ Best Rotation'
-    : `Alternative #${rotation?.rank ?? 1}`;
+  const rankBadge = rotation?.isCustom
+    ? `★ Your Custom Rotation · #${rotation.rank}`
+    : isBest
+      ? activeFilter === 'default'
+        ? '★ Best Rotation'
+        : `★ #1 ${FILTER_LABELS[activeFilter]}`
+      : `Alternative #${rotation?.rank ?? 1}`;
   const sequenceTitle = rotation?.name || slots.map((slot) => slot.cropName).join(' → ');
 
   const summaryStats = [
@@ -242,10 +260,30 @@ export default function PlanScreen() {
   const sowingDate = usePlanner((draft) => draft.sowingDate);
   const selectedRotationId = usePlanner((draft) => draft.selectedRotationId);
   const selectRotation = usePlanner((draft) => draft.selectRotation);
+  const rotationFilter = usePlanner((draft) => draft.rotationFilter);
+  const customCropIds = usePlanner((draft) => draft.customCropIds);
+  const setRotationFilter = usePlanner((draft) => draft.setRotationFilter);
+  const setCustomCropIds = usePlanner((draft) => draft.setCustomCropIds);
+  const toggleCustomCropId = usePlanner((draft) => draft.toggleCustomCropId);
 
   const bootstrap = useCountryData();
   const strategies = useStrategies(countryId);
   const selected = getSelectedStrategy(strategies.data, strategyId, bootstrap.data?.defaultStrategyId);
+  const cropRegion = useMemo(
+    () => ({ latitude, longitude, sowingDate }),
+    [latitude, longitude, sowingDate],
+  );
+  const cropsQuery = useCrops(countryId, '', '', cropRegion);
+  const availableCrops = useMemo<CropPickerItem[]>(
+    () =>
+      (cropsQuery.data?.pages.flatMap((page) => page.items) ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        family: c.family,
+        category: c.category,
+      })),
+    [cropsQuery.data],
+  );
 
   const draft = useMemo(
     () => (reached >= 5 && countryId && closed && selected
@@ -260,18 +298,48 @@ export default function PlanScreen() {
           irrigation,
           cropId: selected.requiresCrop ? cropId ?? bootstrap.data?.defaultCropId : undefined,
           sowingDate,
+          customCropIds: customCropIds.length > 0 ? customCropIds : undefined,
         }
       : null),
-    [reached, countryId, closed, selected, points, latitude, longitude, boundary, areaHa, irrigation, cropId, bootstrap.data?.defaultCropId, sowingDate],
+    [
+      reached,
+      countryId,
+      closed,
+      selected,
+      points,
+      latitude,
+      longitude,
+      boundary,
+      areaHa,
+      irrigation,
+      cropId,
+      bootstrap.data?.defaultCropId,
+      sowingDate,
+      customCropIds,
+    ],
   );
 
   const query = usePlan(draft);
+  const baseDraftKey = draft
+    ? `${draft.countryId}|${draft.strategyId}|${draft.cropId ?? ''}|${draft.sowingDate}|${draft.irrigation}|${draft.latitude ?? ''}|${draft.longitude ?? ''}`
+    : '';
+  const [retainedPlan, setRetainedPlan] = useState<{ key: string; data: Plan } | null>(null);
+
+  if (query.data && baseDraftKey && (retainedPlan?.key !== baseDraftKey || retainedPlan.data !== query.data)) {
+    setRetainedPlan({ key: baseDraftKey, data: query.data });
+  }
+
+  const plan = query.data ?? (retainedPlan && retainedPlan.key === baseDraftKey ? retainedPlan.data : undefined);
+  const hasPlanData = !!plan;
   const offline = useOffline();
   const state = viewState({
     isPaused: query.isPaused || strategies.isPaused || bootstrap.isPaused,
-    isPending: strategies.isPending || bootstrap.isPending || (!!draft && (query.isPending || (query.isFetching && !query.data))),
+    isPending:
+      strategies.isPending ||
+      bootstrap.isPending ||
+      (!!draft && !hasPlanData && (query.isPending || (query.isFetching && !query.data))),
     isError: query.isError || strategies.isError || bootstrap.isError,
-  }, offline, !!query.data);
+  }, offline, hasPlanData);
 
   const [active, setActive] = useState<string>(tabs[0].id);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -280,14 +348,31 @@ export default function PlanScreen() {
   const refresh = () => {
     void strategies.refetch();
     void bootstrap.refetch();
+    void cropsQuery.refetch();
     if (draft) void query.refetch();
   };
 
-  const plan = query.data;
+  const rankedRotations = useMemo(
+    () => rankRotationsByFilter(plan?.rotations ?? [], rotationFilter),
+    [plan?.rotations, rotationFilter],
+  );
+
+  const customRotation = useMemo(
+    () => rankedRotations.find((rot) => rot.isCustom),
+    [rankedRotations],
+  );
+
   const activeRotation = useMemo(() => {
-    if (!plan?.rotations.length) return undefined;
-    return plan.rotations.find((rot) => rot.id === selectedRotationId) ?? plan.rotations[0];
-  }, [plan, selectedRotationId]);
+    if (!rankedRotations.length) return undefined;
+    if (selectedRotationId) {
+      const matched = rankedRotations.find((rot) => rot.id === selectedRotationId);
+      if (matched) return matched;
+    }
+    if (customCropIds.length > 0 && customRotation) {
+      return customRotation;
+    }
+    return rankedRotations[0];
+  }, [rankedRotations, selectedRotationId, customCropIds.length, customRotation]);
 
   const slots = useMemo<CarouselSlotItem[]>(() => {
     if (activeRotation?.slots.length) return activeRotation.slots;
@@ -296,6 +381,71 @@ export default function PlanScreen() {
   }, [activeRotation, plan]);
 
   const safeFocusedIndex = Math.max(0, Math.min(focusedIndex, Math.max(0, slots.length - 1)));
+
+  const pinnedCropId = selected?.requiresCrop
+    ? (cropId ?? bootstrap.data?.defaultCropId ?? undefined)
+    : undefined;
+  const pinnedCropName = pinnedCropId
+    ? (availableCrops.find((c) => c.id === pinnedCropId)?.name ??
+        (plan?.crop.id === pinnedCropId ? plan.crop.name : undefined))
+    : undefined;
+
+  const handleSmartSwap = (replaceCropId: string, withCropId: string) => {
+    tap();
+    const hasReplace = customCropIds.includes(replaceCropId);
+    const replaced = hasReplace
+      ? customCropIds.map((id) => (id === replaceCropId ? withCropId : id))
+      : [...customCropIds, withCropId];
+    const nextIds = Array.from(new Set(replaced)).slice(0, 4);
+    setCustomCropIds(nextIds);
+    selectRotation(null);
+    setFocusedIndex(0);
+    setHasInteracted(false);
+  };
+
+  const filterAndBuilder = (
+    <>
+      <RotationFilterBar
+        activeFilter={rotationFilter}
+        onSelectFilter={(filter) => {
+          tap();
+          setRotationFilter(filter);
+          selectRotation(null);
+          setFocusedIndex(0);
+          setHasInteracted(false);
+        }}
+      />
+      <CustomCropBuilderCard
+        availableCrops={availableCrops}
+        selectedCropIds={customCropIds}
+        pinnedCropId={pinnedCropId}
+        pinnedCropName={pinnedCropName}
+        customRotation={customRotation}
+        totalRotations={rankedRotations.length}
+        onToggleCrop={(id) => {
+          tap();
+          toggleCustomCropId(id);
+          selectRotation(null);
+          setFocusedIndex(0);
+          setHasInteracted(false);
+        }}
+        onClearCrops={() => {
+          tap();
+          setCustomCropIds([]);
+          selectRotation(null);
+          setFocusedIndex(0);
+          setHasInteracted(false);
+        }}
+        onApplySmartSwap={handleSmartSwap}
+        onSelectCustomRotation={(id) => {
+          tap();
+          selectRotation(id);
+          setFocusedIndex(0);
+          setHasInteracted(false);
+        }}
+      />
+    </>
+  );
 
   const ctaAction = active === 'alternatives'
     ? 'View selected rotation'
@@ -337,50 +487,61 @@ export default function PlanScreen() {
                 <Feedback state={state} layout="plan" onRetry={refresh}>
                   {plan && (active === 'overview'
                     ? (
-                      <Overview
-                        plan={plan}
-                        rotation={activeRotation}
-                        slots={slots}
-                        focusedIndex={safeFocusedIndex}
-                        hasInteracted={hasInteracted}
-                        onFocusSlot={(idx, mark = true) => {
-                          if (mark) setHasInteracted(true);
-                          setFocusedIndex(idx);
-                        }}
-                        onReset={() => {
-                          setHasInteracted(false);
-                          setFocusedIndex(0);
-                        }}
-                        onOpenAlternatives={() => {
-                          tap();
-                          setActive('alternatives');
-                        }}
-                      />
+                      <>
+                        {filterAndBuilder}
+                        <Overview
+                          plan={plan}
+                          rotation={activeRotation}
+                          activeFilter={rotationFilter}
+                          slots={slots}
+                          focusedIndex={safeFocusedIndex}
+                          hasInteracted={hasInteracted}
+                          onFocusSlot={(idx, mark = true) => {
+                            if (mark) setHasInteracted(true);
+                            setFocusedIndex(idx);
+                          }}
+                          onReset={() => {
+                            setHasInteracted(false);
+                            setFocusedIndex(0);
+                          }}
+                          onOpenAlternatives={() => {
+                            tap();
+                            setActive('alternatives');
+                          }}
+                        />
+                      </>
                     )
                     : active === 'timeline'
                       ? <RotationTimeline plan={plan} rotation={activeRotation} />
-                      : plan.rotations.length > 0
-                        ? (
-                          <AlternativesList
-                            rotations={plan.rotations}
-                            selectedId={activeRotation?.id}
-                            onSelect={(id) => {
-                              tap();
-                              selectRotation(id);
-                              setFocusedIndex(0);
-                              setHasInteracted(false);
-                              setActive('overview');
-                            }}
-                          />
-                        )
-                        : (
-                          <Surface kind="card" rounding={radius.tile} style={styles.emptyCard}>
-                            <Label variant="button" tone="cream">Single rotation active</Label>
-                            <Label variant="caption" tone="sage">
-                              Additional crop rotation alternatives appear when multiple seasonal combinations fit this field.
-                            </Label>
-                          </Surface>
-                        ))}
+                      : (
+                        <>
+                          {filterAndBuilder}
+                          {rankedRotations.length > 0
+                            ? (
+                              <AlternativesList
+                                rotations={rankedRotations}
+                                selectedId={activeRotation?.id}
+                                activeFilter={rotationFilter}
+                                onSelect={(id) => {
+                                  tap();
+                                  selectRotation(id);
+                                  setFocusedIndex(0);
+                                  setHasInteracted(false);
+                                  setActive('overview');
+                                }}
+                                onApplySmartSwap={handleSmartSwap}
+                              />
+                            )
+                            : (
+                              <Surface kind="card" rounding={radius.tile} style={styles.emptyCard}>
+                                <Label variant="button" tone="cream">Single rotation active</Label>
+                                <Label variant="caption" tone="sage">
+                                  Additional crop rotation alternatives appear when multiple seasonal combinations fit this field.
+                                </Label>
+                              </Surface>
+                            )}
+                        </>
+                      ))}
                 </Feedback>
               </ScrollView>
             </ScrollFrame>

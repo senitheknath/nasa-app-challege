@@ -1,7 +1,9 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
+import { baseUrl, serverStore } from '@/api/config';
 import { ApiError } from '@/api/errors';
 import { Logo } from '@/components/cards';
 import { Chip, ErrorCard, IconButton, Label, Message, PrimaryButton, Segmented, Surface } from '@/components/primitives';
@@ -31,6 +33,43 @@ export default function AuthScreen() {
   const [farmNameInput, setFarmNameInput] = useState<string | null>(null);
   const effectiveFarmName = farmNameInput ?? planner.farmName ?? '';
   const [savedBanner, setSavedBanner] = useState(false);
+
+  const queryClient = useQueryClient();
+  const [serverInput, setServerInput] = useState(baseUrl);
+  const [activeServer, setActiveServer] = useState(baseUrl);
+  const [serverStatus, setServerStatus] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void serverStore.get().then((url) => {
+      setActiveServer(url);
+      setServerInput(url);
+    });
+  }, []);
+
+  const handleSaveServer = async () => {
+    setServerError(null);
+    setServerStatus(null);
+    try {
+      const nextUrl = await serverStore.set(serverInput);
+      setActiveServer(nextUrl);
+      setServerInput(nextUrl);
+      setServerStatus(strings.serverSaved);
+      void queryClient.invalidateQueries();
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : strings.failed);
+    }
+  };
+
+  const handleResetServer = async () => {
+    setServerError(null);
+    setServerStatus(null);
+    const nextUrl = await serverStore.reset();
+    setActiveServer(nextUrl);
+    setServerInput(nextUrl);
+    setServerStatus(strings.serverSaved);
+    void queryClient.invalidateQueries();
+  };
 
   const authMe = useAuthMe();
   const user = authMe.data ?? null;
@@ -258,6 +297,36 @@ export default function AuthScreen() {
                 )}
               </View>
             )}
+
+            <Surface kind="card" style={styles.formCard}>
+              <View style={styles.farmsHeader}>
+                <Label variant="title">{strings.serverTitle}</Label>
+                <Label variant="caption" tone="sage">{activeServer}</Label>
+              </View>
+              <View style={styles.field}>
+                <Label variant="label" tone="sage">IP:PORT OR URL</Label>
+                <TextInput
+                  style={styles.input}
+                  value={serverInput}
+                  onChangeText={(text) => {
+                    setServerInput(text);
+                    setServerError(null);
+                    setServerStatus(null);
+                  }}
+                  placeholder={strings.serverPlaceholder}
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+              </View>
+              {serverError && <Label variant="caption" tone="accent">{serverError}</Label>}
+              {serverStatus && <Label variant="caption" tone="accent">{serverStatus}</Label>}
+              <View style={styles.farmActions}>
+                <Chip label={strings.saveServer} accent onPress={() => void handleSaveServer()} />
+                <Chip label={strings.resetServer} onPress={() => void handleResetServer()} />
+              </View>
+            </Surface>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

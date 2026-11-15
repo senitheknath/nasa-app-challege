@@ -2,7 +2,7 @@ import { fieldSchema, isValidBoundary, mapMeasurement, polygonArea } from '@/fea
 import { countryDataSchema, mapCountryData } from '@/features/country/model';
 import { cropPageSchema, cropSchema, mapCrop } from '@/features/crop/model';
 import { mapMonitorResponse, monitorResponseSchema } from '@/features/monitor/model';
-import { mapPlan, planRequestSchema, planSchema } from '@/features/plan/model';
+import { mapPlan, planRequestSchema, planSchema, rankRotationsByFilter } from '@/features/plan/model';
 import { usePlanner } from '@/state/usePlanner';
 import { calendarDate, parseCalendarDate } from '@/utils/format';
 
@@ -600,4 +600,291 @@ test('maps multi-crop rotation slots, best rotation highlights, and concise soil
   expect(alt4.cropCount).toBe(2);
   expect(alt4.totalDays).toBe(190);
   expect(alt4.slots[1].soilBenefit).toBe('Balances soil nutrients');
+});
+
+test('usePlanner manages rotationFilter and customCropIds with max 4 crops and resets on country change/reset', () => {
+  const draft = usePlanner.getState();
+  try {
+    expect(usePlanner.getState().rotationFilter).toBe('default');
+    expect(usePlanner.getState().customCropIds).toEqual([]);
+
+    draft.setRotationFilter('water');
+    expect(usePlanner.getState().rotationFilter).toBe('water');
+
+    draft.toggleCustomCropId('rice');
+    draft.toggleCustomCropId('mungbean');
+    draft.toggleCustomCropId('maize');
+    draft.toggleCustomCropId('groundnut');
+    draft.toggleCustomCropId('potato');
+    expect(usePlanner.getState().customCropIds).toEqual(['rice', 'mungbean', 'maize', 'groundnut']);
+
+    draft.toggleCustomCropId('mungbean');
+    expect(usePlanner.getState().customCropIds).toEqual(['rice', 'maize', 'groundnut']);
+
+    draft.setCustomCropIds(['soybean', 'cowpea', 'soybean']);
+    expect(usePlanner.getState().customCropIds).toEqual(['soybean', 'cowpea']);
+
+    draft.chooseCountry('KE');
+    expect(usePlanner.getState().rotationFilter).toBe('default');
+    expect(usePlanner.getState().customCropIds).toEqual([]);
+
+    draft.setRotationFilter('pest');
+    draft.setCustomCropIds(['maize', 'groundnut']);
+    draft.reset();
+    expect(usePlanner.getState().rotationFilter).toBe('default');
+    expect(usePlanner.getState().customCropIds).toEqual([]);
+  } finally {
+    draft.reset();
+  }
+});
+
+test('maps filterScores, isCustom, customComparison, smartSwap and ranks rotations via rankRotationsByFilter', () => {
+  const req = planRequestSchema.parse({
+    ...field,
+    strategyId: 'continuous_rainfed',
+    sowingDate: '2026-11-15',
+    customCropIds: ['maize', 'groundnut', 'potato'],
+  });
+  expect(req.customCropIds).toEqual(['maize', 'groundnut', 'potato']);
+
+  const dto = planSchema.parse({
+    hectares: 4.0,
+    strategyTag: 'Rainfed',
+    mode: 'continuous',
+    crop: {
+      id: 'rice',
+      name: 'Paddy Rice',
+      category: { id: 'Poaceae', label: 'Poaceae' },
+      yieldTonnesPerHectare: 4.5,
+      waterPercent: 50,
+    },
+    timeline: [],
+    rotations: [
+      {
+        id: 'rice__mungbean__sesame',
+        name: 'Paddy Rice → Mungbean → Sesame',
+        rank: 1,
+        score: 90,
+        ease_adjusted_score: 78,
+        rating: 'Optimal',
+        is_custom: false,
+        filter_scores: {
+          default: 90,
+          water: 72,
+          soil: 86,
+          pest: 88,
+          ease: 78,
+        },
+        timeline: {
+          feasible: true,
+          turnaround_summary: { buffer_days: 10, status: 'good', advisory: '10d prep' },
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-02-20',
+            },
+            {
+              crop_id: 'mungbean',
+              crop_name: 'Mungbean',
+              family: 'Fabaceae',
+              sowing_date: '2027-03-02',
+              harvest_nominal_date: '2027-05-20',
+            },
+            {
+              crop_id: 'sesame',
+              crop_name: 'Sesame',
+              family: 'Pedaliaceae',
+              sowing_date: '2027-06-01',
+              harvest_nominal_date: '2027-08-30',
+            },
+          ],
+        },
+      },
+      {
+        id: 'custom_maize_groundnut_potato',
+        name: 'Maize → Groundnut → Potato',
+        rank: 2,
+        score: 82,
+        ease_adjusted_score: 85,
+        rating: 'Good',
+        is_custom: true,
+        components: {
+          climate_suitability: 35,
+          transition_synergy: 24,
+        },
+        easiness_matrix: {
+          easiness_tier: 'Easy',
+          easiness_score: 85,
+          factors: {
+            water_irrigation_dependency: 1.5,
+            soil_nutrient_intervention: 2.0,
+            pest_pathogen_vigilance: 3.0,
+          },
+        },
+        custom_comparison: {
+          gap_pts: -8,
+          reason: 'Lower seasonal climate fit than #1 regional plan',
+        },
+        smart_swap: {
+          replace_crop_id: 'potato',
+          replace_crop_name: 'Potato',
+          with_crop_id: 'cowpea',
+          with_crop_name: 'Cowpea',
+          gain_pts: 6.5,
+          reason: 'Fixes soil nitrogen',
+        },
+        timeline: {
+          feasible: true,
+          turnaround_summary: { buffer_days: 18, status: 'optimal', advisory: '18d buffer' },
+          slots: [
+            {
+              crop_id: 'maize',
+              crop_name: 'Maize',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-02-25',
+            },
+            {
+              crop_id: 'groundnut',
+              crop_name: 'Groundnut',
+              family: 'Fabaceae',
+              sowing_date: '2027-03-15',
+              harvest_nominal_date: '2027-06-20',
+            },
+            {
+              crop_id: 'potato',
+              crop_name: 'Potato',
+              family: 'Solanaceae',
+              sowing_date: '2027-07-08',
+              harvest_nominal_date: '2027-10-15',
+            },
+          ],
+        },
+      },
+      {
+        id: 'custom_fallback_no_reason',
+        name: 'Maize → Sorghum',
+        rank: 3,
+        score: 74,
+        rating: 'Fair',
+        is_custom: true,
+        filter_scores: {
+          default: 74,
+          water: 60,
+          soil: 55,
+          pest: 50,
+          ease: 68,
+        },
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'maize',
+              crop_name: 'Maize',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-02-25',
+            },
+            {
+              crop_id: 'sorghum',
+              crop_name: 'Sorghum',
+              family: 'Poaceae',
+              sowing_date: '2027-03-15',
+              harvest_nominal_date: '2027-06-20',
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const plan = mapPlan(dto);
+  expect(plan).not.toBeNull();
+  const rotations = plan!.rotations;
+  expect(rotations[0].isCustom).toBe(false);
+  expect(rotations[0].filterScores).toEqual({
+    default: 90,
+    water: 72,
+    soil: 86,
+    pest: 88,
+    ease: 78,
+  });
+
+  // Fallback filterScores computed from components & easiness_matrix.factors
+  // water: (10 - 1.5) * 7 + 35 * 0.8 = 59.5 + 28 = 87.5 -> 88
+  // soil: (10 - 2.0) * 7 + 24 = 56 + 24 = 80
+  // pest: (10 - 3.0) * 7 + 24 = 49 + 24 = 73
+  expect(rotations[1].isCustom).toBe(true);
+  expect(rotations[1].filterScores).toEqual({
+    default: 82,
+    water: 88,
+    soil: 80,
+    pest: 73,
+    ease: 85,
+  });
+  expect(rotations[1].customComparison).toEqual({
+    gapPts: -8,
+    reason: 'Lower seasonal climate fit than #1 regional plan',
+  });
+  expect(rotations[1].smartSwap).toEqual({
+    replaceCropId: 'potato',
+    replaceCropName: 'Potato',
+    withCropId: 'cowpea',
+    withCropName: 'Cowpea',
+    gainPts: 6.5,
+    reason: 'Fixes soil nitrogen',
+  });
+
+  // Default filter keeps regional #1 on top and updates customComparison
+  const rankedDefault = rankRotationsByFilter(rotations, 'default');
+  expect(rankedDefault.map((r) => r.id)).toEqual([
+    'rice__mungbean__sesame',
+    'custom_maize_groundnut_potato',
+    'custom_fallback_no_reason',
+  ]);
+  expect(rankedDefault[0]).toMatchObject({ rank: 1, isBest: true, score: 90, badge: 'Highest yield & fit' });
+  expect(rankedDefault[1]).toMatchObject({
+    rank: 2,
+    isBest: false,
+    score: 82,
+    badge: 'Custom rotation',
+    customComparison: { gapPts: -8, reason: 'Lower seasonal climate fit than #1 regional plan' },
+  });
+  expect(rankedDefault[2].customComparison).toEqual({
+    gapPts: -16,
+    reason: '-16 pts vs #1 Paddy Rice plan',
+  });
+
+  // Water filter promotes custom_maize_groundnut_potato (88) to #1
+  const rankedWater = rankRotationsByFilter(rotations, 'water');
+  expect(rankedWater[0].id).toBe('custom_maize_groundnut_potato');
+  expect(rankedWater[0]).toMatchObject({
+    rank: 1,
+    isBest: true,
+    score: 88,
+    badge: 'Low water · Rainfed safe',
+    customComparison: {
+      gapPts: 0,
+      reason: '★ #1 Best choice for water in this region',
+    },
+  });
+  expect(rankedWater[1]).toMatchObject({
+    rank: 2,
+    isBest: false,
+    score: 72,
+    badge: 'Moderate water use',
+  });
+
+  // Ease filter uses turnaround_summary.buffer_days in badge
+  const rankedEase = rankRotationsByFilter(rotations, 'ease');
+  expect(rankedEase[0].id).toBe('custom_maize_groundnut_potato');
+  expect(rankedEase[0].badge).toBe('18d buffer · Easy prep');
+  expect(rankedEase[1].badge).toBe('10d buffer · Easy prep');
+  expect(rankedEase[2].badge).toBe('14d buffer · Easy prep');
+
+  // Empty array returns empty
+  expect(rankRotationsByFilter([], 'soil')).toEqual([]);
 });
