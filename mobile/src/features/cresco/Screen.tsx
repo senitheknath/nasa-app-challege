@@ -172,7 +172,8 @@ export default function CrescoScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'web' ? undefined : 'padding'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 8}
         style={styles.flex}
       >
         <View style={styles.frame}>

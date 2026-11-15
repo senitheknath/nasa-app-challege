@@ -49,8 +49,10 @@ export function FlowScreen({ step, action, onNext, disabled, busy, standaloneTit
 
   const safe = useSafeAreaInsets();
   const top = Platform.OS === 'web' ? Math.max(safe.top, size.webTop) : safe.top + space.md;
+  const hasPrimaryButton = Boolean(action) && !standaloneActive;
+  const defaultFooterHeight = (hasPrimaryButton ? size.navigation : size.control + space.xl) + safe.bottom;
   const [header, setHeader] = useState(top + size.touch + space.xl);
-  const [footer, setFooter] = useState(size.navigation + safe.bottom);
+  const [footer, setFooter] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
@@ -82,7 +84,7 @@ export function FlowScreen({ step, action, onNext, disabled, busy, standaloneTit
       <View style={styles.frame}>
         <Animated.View entering={reducedMotion ? undefined : FadeInDown.duration(motion.enter).withInitialValues({ transform: [{ translateY: motion.rise }] })}
           style={styles.viewport}>
-          {children({ top: step === 1 && !standaloneActive ? top : header + space.md, bottom: editing ? size.keyboardClearance : Math.max(size.navigation, footer) })}
+          {children({ top: step === 1 && !standaloneActive ? top : header + space.md, bottom: editing ? size.keyboardClearance : (footer ?? defaultFooterHeight) })}
         </Animated.View>
         {(step > 1 || standaloneActive) && (
           <View pointerEvents="box-none" style={styles.header} onLayout={(event) => setHeader(event.nativeEvent.layout.height)}>
@@ -93,7 +95,8 @@ export function FlowScreen({ step, action, onNext, disabled, busy, standaloneTit
         {!editing && (
           <View pointerEvents="box-none" style={styles.footer} onLayout={(event) => {
             // The gradient begins above the buttons. Content may scroll through the gradient.
-            setFooter(event.nativeEvent.layout.height - space.fade + space.lg);
+            const topPad = hasPrimaryButton ? space.fade : space.md;
+            setFooter(Math.max(0, event.nativeEvent.layout.height - topPad + space.lg));
           }}>
             <ScreenFooter label={action} current={step} reached={reached} skipped={skipCrop ? 4 : undefined}
               disabled={disabled} busy={busy} onNext={onNext} onStep={(next) => go(next as Step)}

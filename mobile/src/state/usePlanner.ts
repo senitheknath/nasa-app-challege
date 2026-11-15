@@ -108,10 +108,15 @@ export type SavedFarmInput = {
   latitude: number;
   longitude: number;
   area_ha?: number | null;
-  boundary?: GeoPoint[] | null;
+  boundary?: unknown;
   irrigation?: string | null;
   crop_id?: string | null;
   start_date?: string | null;
+  farm?: {
+    irrigation?: string | null;
+    crop_id?: string | null;
+    start_date?: string | null;
+  } | null;
 };
 
 type Draft = {
@@ -185,8 +190,60 @@ const DEFAULT_POLYGON: Point[] = [
   { x: 20, y: 80 },
 ];
 
-function boundaryToPoints(boundary?: GeoPoint[] | null): Point[] {
-  if (!boundary || boundary.length < 3) return DEFAULT_POLYGON;
+function parseBoundaryPoint(pt: unknown): GeoPoint | null {
+  if (Array.isArray(pt) && pt.length >= 2) {
+    const lon = Number(pt[0]);
+    const lat = Number(pt[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { latitude: lat, longitude: lon };
+    }
+    return null;
+  }
+  if (pt && typeof pt === 'object') {
+    const obj = pt as Record<string, unknown>;
+    const lat = Number(obj.latitude ?? obj.lat);
+    const lon = Number(obj.longitude ?? obj.lng ?? obj.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { latitude: lat, longitude: lon };
+    }
+  }
+  return null;
+}
+
+export function normalizeGeoBoundary(raw: unknown): GeoPoint[] {
+  let coords: unknown = raw;
+  if (typeof coords === 'string') {
+    try {
+      coords = JSON.parse(coords);
+    } catch {
+      return [];
+    }
+  }
+  if (coords && typeof coords === 'object' && !Array.isArray(coords)) {
+    const obj = coords as Record<string, unknown>;
+    if (obj.type === 'Polygon' && Array.isArray(obj.coordinates) && Array.isArray(obj.coordinates[0])) {
+      coords = obj.coordinates[0];
+    } else if (Array.isArray(obj.coordinates)) {
+      coords = obj.coordinates;
+    } else {
+      return [];
+    }
+  }
+  if (!Array.isArray(coords)) return [];
+  const ring = coords.map(parseBoundaryPoint).filter((p): p is GeoPoint => p !== null);
+  if (ring.length >= 4) {
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (Math.abs(first.latitude - last.latitude) < 1e-7 && Math.abs(first.longitude - last.longitude) < 1e-7) {
+      ring.pop();
+    }
+  }
+  return ring.length >= 3 ? ring : [];
+}
+
+function boundaryToPoints(raw?: unknown): Point[] {
+  const boundary = normalizeGeoBoundary(raw);
+  if (boundary.length < 3) return DEFAULT_POLYGON;
   const lats = boundary.map((p) => p.latitude);
   const lons = boundary.map((p) => p.longitude);
   const minLat = Math.min(...lats);
@@ -362,24 +419,32 @@ export const usePlanner = create<Planner>()((set) => ({
     farmName: farmName !== undefined ? farmName : state.farmName,
   })),
   loadSavedFarm: (farm) => set((state) => {
-    const irrigation = farm.irrigation === 'irrigated' ? 'irrigated' : 'rainfed';
-    const boundary = farm.boundary && farm.boundary.length >= 3 ? farm.boundary : [];
+    const rawIrrigation = farm.irrigation ?? farm.farm?.irrigation ?? null;
+    const rawCropId = farm.crop_id ?? farm.farm?.crop_id ?? null;
+    const rawStartDate = farm.start_date ?? farm.farm?.start_date ?? null;
+    const irrigation = rawIrrigation === 'irrigated' ? 'irrigated' : 'rainfed';
+    const boundary = normalizeGeoBoundary(farm.boundary);
+    const latitude = Number.isFinite(Number(farm.latitude)) ? Number(farm.latitude) : state.latitude;
+    const longitude = Number.isFinite(Number(farm.longitude)) ? Number(farm.longitude) : state.longitude;
     return {
       farmId: farm.id,
-      farmName: farm.name,
-      countryId: farm.country,
-      latitude: farm.latitude,
-      longitude: farm.longitude,
+      farmName: farm.name || 'Saved Farm',
+      countryId: farm.country || state.countryId,
+      latitude,
+      longitude,
       zoom: 13,
-      points: boundaryToPoints(farm.boundary),
+      points: boundaryToPoints(boundary),
       boundary,
       areaHa: farm.area_ha ?? null,
       closed: true,
       reached: 6,
-      strategyId: farm.crop_id ? 'standing' : 'fallow',
+      strategyId: rawCropId ? 'standing' : 'fallow',
       irrigation,
-      cropId: farm.crop_id ?? state.cropId,
-      sowingDate: farm.start_date ?? state.sowingDate,
+      cropId: rawCropId,
+      sowingDate: rawStartDate || state.sowingDate,
+      selectedRotationId: null,
+      customCropIds: [],
+      observedNdvi: null,
     };
   }),
   unlock: (step) => set((state) => ({ reached: Math.max(state.reached, step) })),

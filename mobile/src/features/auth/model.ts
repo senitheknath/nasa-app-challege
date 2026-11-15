@@ -23,10 +23,11 @@ export const savedFarmSchema = z.object({
   latitude: z.number(),
   longitude: z.number(),
   area_ha: z.number().nullable().optional(),
-  boundary: z.array(geoPointSchema).nullable().optional(),
+  boundary: z.unknown().nullable().optional(),
   irrigation: z.string().nullable().optional(),
   crop_id: z.string().nullable().optional(),
   start_date: z.string().nullable().optional(),
+  farm: z.record(z.string(), z.unknown()).nullable().optional(),
   updated_at: z.string().optional(),
 });
 

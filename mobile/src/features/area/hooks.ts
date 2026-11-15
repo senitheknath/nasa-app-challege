@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { endpoints } from '@/api/endpoints';
 import { keys } from '@/api/keys';
 import { cache } from '@/api/query';
@@ -19,6 +19,7 @@ export function usePlaces(country: string, search: string, enabled: boolean) {
     queryKey: keys.places(country, search),
     enabled: !!country && enabled,
     staleTime: cache.suggestions,
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => endpoints.places(country, search, signal),
     select: (dto) => dto.map(mapPlace),
   });
