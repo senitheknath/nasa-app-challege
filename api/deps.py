@@ -17,8 +17,14 @@ from starlette.responses import JSONResponse
 from agroshift.decision import CRITERIA, Farm, Window
 from agroshift.earth_data.geometry import normalize_boundary, polygon_centroid
 from agroshift.identity import get_user_from_token, list_user_farms
-from agroshift.locations import load_history
+from agroshift.science.climate.power import (
+    PARAMETERS,
+    PowerClient,
+    archived_history,
+    request_parameters,
+)
 
+POWER_CLIENT = PowerClient()
 _DATASET_CACHE: OrderedDict[tuple[float, float], Any] = OrderedDict()
 _DATASET_LOCK = threading.Lock()
 
@@ -69,6 +75,25 @@ def _align_dataset_coords(ds: Any, latitude: float, longitude: float) -> Any:
     return Dataset(frame=frame_copy, provenance=ds.provenance, issues=ds.issues)
 
 
+def _load_climate_history(
+    lat: float,
+    lon: float,
+    *,
+    first: int = 2001,
+    last: int = 2025,
+    refresh: bool = False,
+):
+    start, end = date(first, 1, 1), date(last, 12, 31)
+    if not refresh:
+        archive = archived_history(
+            request_parameters(lat, lon, start, end, PARAMETERS),
+            "verified bundled NASA archive",
+        )
+        if archive is not None:
+            return archive
+    return POWER_CLIENT.fetch(lat, lon, start, end, force=refresh, reuse_grid_cell=True)
+
+
 def get_dataset(latitude: float, longitude: float, refresh: bool = False):
     lat_f, lon_f = float(latitude), float(longitude)
     key = (round(lat_f, 4), round(lon_f, 4))
@@ -79,7 +104,7 @@ def get_dataset(latitude: float, longitude: float, refresh: bool = False):
                 _DATASET_CACHE.move_to_end(key)
                 return _align_dataset_coords(ds, lat_f, lon_f)
     try:
-        ds = load_history(lat_f, lon_f, refresh=refresh)
+        ds = _load_climate_history(lat_f, lon_f, refresh=refresh)
     except Exception:
         if refresh:
             raise
@@ -89,7 +114,11 @@ def get_dataset(latitude: float, longitude: float, refresh: bool = False):
             STATIONS,
             key=lambda s: (float(s["latitude"]) - lat_f) ** 2 + (float(s["longitude"]) - lon_f) ** 2,
         )
-        ds = load_history(float(nearest["latitude"]), float(nearest["longitude"]), refresh=False)
+        ds = _load_climate_history(
+            float(nearest["latitude"]),
+            float(nearest["longitude"]),
+            refresh=False,
+        )
     ds = _align_dataset_coords(ds, lat_f, lon_f)
     with _DATASET_LOCK:
         _DATASET_CACHE[key] = ds

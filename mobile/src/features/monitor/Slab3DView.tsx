@@ -703,18 +703,26 @@ export function Slab3DView({ slab }: { slab: Slab3DDto }) {
             </Defs>
 
             {/* Terrain-Following 3D Soil Horizons */}
-            {scene.visibleSoilFaces.map((face, idx) => (
-              <Polygon
-                key={`soil-${idx}`}
-                points={pts(face.points)}
-                fill={face.fill}
-                stroke={face.stroke}
-                strokeWidth={face.horizonIdx === selectedHorizon ? 1.8 : 1}
-                onPress={face.horizonIdx !== undefined
+            {scene.visibleSoilFaces.map((face, idx) => {
+              const handleSelect =
+                face.horizonIdx !== undefined
                   ? () => setSelectedHorizon((prev) => (prev === face.horizonIdx ? null : face.horizonIdx ?? null))
-                  : undefined}
-              />
-            ))}
+                  : undefined;
+              const interactionProps =
+                Platform.OS === 'web'
+                  ? ({ onClick: handleSelect } as Record<string, unknown>)
+                  : { onPress: handleSelect };
+              return (
+                <Polygon
+                  key={`soil-${idx}`}
+                  points={pts(face.points)}
+                  fill={face.fill}
+                  stroke={face.stroke}
+                  strokeWidth={face.horizonIdx === selectedHorizon ? 1.8 : 1}
+                  {...interactionProps}
+                />
+              );
+            })}
 
             {/* Active Root Depth Plane */}
             {showRoots && (

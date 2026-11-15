@@ -4,7 +4,7 @@ import { strings } from '@/i18n/strings';
 import { colors, icons, motion, radius, size, space } from '@/theme/tokens';
 import { useTheme } from '@/theme/useTheme';
 import { Icon, type IconName } from './Icon';
-import { Chip, Label, Progress, Surface } from './primitives';
+import { Chip, Label, Surface } from './primitives';
 
 export function Logo() {
   return (
@@ -81,13 +81,10 @@ export function CropCard({
   family,
   name,
   scientificName,
-  coverageValue,
-  coverageLabel,
   cropYield,
   growthDays,
   suitability,
   reason,
-  water,
   waterLabel,
 }: {
   selected: boolean;
@@ -106,8 +103,6 @@ export function CropCard({
   water: number;
   waterLabel: string;
 }) {
-  const progressValue = coverageValue ?? water;
-  const metricPrefix = coverageLabel ? strings.modelCoverage : strings.water;
   const headerTag = family ? `${category} · ${family}` : category;
   const suitabilityLabel = suitability === 'possible'
     ? 'Optimal fit'
@@ -132,7 +127,7 @@ export function CropCard({
       details={
         <>
           {scientificName ? <Label variant="caption" tone="sage">{scientificName}</Label> : null}
-          <View style={styles.cropFacts}>
+          <View style={[styles.cropFacts, !reason && styles.cropFactsCompact]}>
             <View style={styles.fact}>
               <Icon name="sprout" size={icons.small} color={colors.sage} />
               <Label variant="caption" tone="sage">{cropYield}</Label>
@@ -153,7 +148,6 @@ export function CropCard({
               {reason}
             </Label>
           ) : null}
-          <Progress value={progressValue} label={metricPrefix} />
         </>
       }
     />
@@ -175,6 +169,27 @@ const STAGE_COLORS = [
   colors.accent,
   colors.cream,
 ] as const;
+
+const SHORT_STAGE_NAMES: Record<string, string> = {
+  initial: 'Initial',
+  init: 'Initial',
+  crop_development: 'Develop',
+  development: 'Develop',
+  canopy: 'Develop',
+  dev: 'Develop',
+  mid_season: 'Mid-Season',
+  'mid-season': 'Mid-Season',
+  mid: 'Mid-Season',
+  late_season: 'Late',
+  'late-season': 'Late',
+  late: 'Late',
+  ripening: 'Late',
+};
+
+function shortStageLabel(stage: string, fallback: string): string {
+  const key = stage.trim().toLowerCase().replace(/\s+/g, '_');
+  return SHORT_STAGE_NAMES[key] ?? fallback;
+}
 
 export function TimelineCard({
   season,
@@ -226,16 +241,46 @@ export function TimelineCard({
 
   return (
     <Surface kind={first ? 'selected' : 'card'} rounding={radius.tile} style={styles.richTimeline}>
-      <View style={styles.timelineHeader}>
-        <View style={styles.selectionBody}>
-          <Label variant="label" tone="sage">{family ? `${season} · ${family}` : season}</Label>
-          <Label variant="action" tone={first ? 'accent' : 'cream'}>{crop}</Label>
-          {!!dateSpan && <Label variant="caption" tone="cream">{dateSpan}</Label>}
-          <Label variant="caption" tone="sage">{growthDays ? `${summary} · ${growthDays}` : summary}</Label>
-          {!!harvestWindow && <Label variant="caption" tone="muted">Harvest: {harvestWindow}</Label>}
+      <View style={styles.timelineTopRow}>
+        <View style={styles.timelineMetaLeft}>
+          <View style={[styles.stagePill, first ? styles.stagePillFirst : styles.stagePillNext]}>
+            <Label variant="smallBold" tone={first ? 'forest950' : 'cream'}>{note}</Label>
+          </View>
+          <Label variant="caption" tone="sage" numberOfLines={1} style={styles.breakable}>{season}</Label>
         </View>
-        <View style={styles.timelineNote}><Chip label={note} accent={first} /></View>
+        {!!family && (
+          <View style={styles.familyTag}>
+            <Label variant="label" tone="sage" numberOfLines={1}>{family}</Label>
+          </View>
+        )}
       </View>
+
+      <View style={styles.timelineMainRow}>
+        <Label variant="cardTitle" tone={first ? 'accent' : 'cream'} style={styles.timelineCropName}>
+          {crop}
+        </Label>
+        {!!summary && (
+          <View style={styles.durationPill}>
+            <Label variant="smallBold" tone="cream">{summary}</Label>
+          </View>
+        )}
+      </View>
+
+      {(!!dateSpan || !!harvestWindow) && (
+        <View style={styles.dateRangeBar}>
+          {!!dateSpan && (
+            <View style={styles.dateRangeRow}>
+              <Icon name="calendar" size={icons.badge} color={colors.accent} />
+              <Label variant="caption" tone="cream" style={styles.breakable}>{dateSpan}</Label>
+            </View>
+          )}
+          {!!harvestWindow && (
+            <View style={styles.harvestBadge}>
+              <Label variant="label" tone="sage" numberOfLines={1}>Harvest: {harvestWindow}</Label>
+            </View>
+          )}
+        </View>
+      )}
 
       {!!stages?.length && (
         <View style={styles.stagesBlock}>
@@ -255,29 +300,17 @@ export function TimelineCard({
           </View>
           <View style={styles.stageLegend}>
             {stages.map((item, idx) => (
-              <View key={`${item.stage}-legend-${idx}`} style={styles.stageItem}>
+              <View key={`${item.stage}-legend-${idx}`} style={styles.stageCol}>
                 <View style={styles.stageTitleRow}>
                   <View style={[styles.stageDot, { backgroundColor: STAGE_COLORS[idx % STAGE_COLORS.length] }]} />
-                  <Label variant="smallBold" tone="cream">{item.label} ({item.durationDays}d)</Label>
+                  <Label variant="label" tone="sage" numberOfLines={1} style={styles.breakable}>
+                    {shortStageLabel(item.stage, item.label)}
+                  </Label>
                 </View>
-                <Label variant="caption" tone="sage">{item.startDate} – {item.endDate}</Label>
+                <Label variant="smallBold" tone="cream">{item.durationDays}d</Label>
               </View>
             ))}
           </View>
-        </View>
-      )}
-
-      {(!!turnaround || !!expiry || collisionPct != null) && (
-        <View style={styles.timelineChips}>
-          {!!turnaround && <Chip label={turnaround} />}
-          {!!expiry && <Chip label={expiry} />}
-          {collisionPct != null && (
-            <View style={[styles.riskBadge, collisionPct > 25 && styles.riskBadgeDanger]}>
-              <Label variant="smallBold" tone={collisionPct > 25 ? 'danger' : 'accent'}>
-                {collisionPct}% risk
-              </Label>
-            </View>
-          )}
         </View>
       )}
     </Surface>
@@ -319,22 +352,31 @@ const styles = StyleSheet.create({
   largeSelectIcon: { width: size.control, height: size.control },
   selectedIcon: { backgroundColor: colors.accent },
   pressed: { transform: [{ scale: motion.pressScale }] },
-  cropFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.sm, marginBottom: space.md },
-  cropReason: { marginBottom: space.sm },
+  cropFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.sm, marginBottom: space.sm },
+  cropFactsCompact: { marginBottom: 0 },
+  cropReason: { marginBottom: space.xs },
   fact: { flexDirection: 'row', alignItems: 'center', gap: space.tight, flexShrink: 1 },
   timeline: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
   richTimeline: { padding: space.lg, gap: space.md },
-  timelineHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  timelineTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  timelineMetaLeft: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1, minWidth: 0 },
+  stagePill: { paddingHorizontal: space.md, paddingVertical: space.xxs, borderRadius: radius.pill },
+  stagePillFirst: { backgroundColor: colors.accent },
+  stagePillNext: { backgroundColor: colors.chip, borderWidth: size.hairline, borderColor: colors.border },
+  familyTag: { paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.innerDark, borderWidth: size.hairline, borderColor: colors.border, maxWidth: '45%' },
+  timelineMainRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm, flexWrap: 'wrap' },
+  timelineCropName: { flex: 1, minWidth: 120 },
+  durationPill: { paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.innerDark, borderWidth: size.hairline, borderColor: colors.border },
+  dateRangeBar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.tile, backgroundColor: colors.innerDark, borderWidth: size.hairline, borderColor: colors.border },
+  dateRangeRow: { flexDirection: 'row', alignItems: 'center', gap: space.tight, flexShrink: 1 },
+  harvestBadge: { paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.chip },
   timelineNote: { maxWidth: '50%' },
-  stagesBlock: { gap: space.sm, paddingTop: space.xs },
+  stagesBlock: { gap: space.sm, paddingTop: space.xxs },
   stageBar: { flexDirection: 'row', height: size.dot, borderRadius: radius.pill, overflow: 'hidden', gap: space.xxs },
   stageSegment: { height: '100%', borderRadius: radius.pill },
-  stageLegend: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  stageItem: { width: '48%', gap: space.xxs },
-  stageTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.tight },
-  stageDot: { width: size.dot, height: size.dot, borderRadius: radius.pill },
-  timelineChips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
-  riskBadge: { paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.highlight, borderWidth: size.hairline, borderColor: colors.accentBorder },
-  riskBadgeDanger: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
+  stageLegend: { flexDirection: 'row', gap: space.xs },
+  stageCol: { flex: 1, minWidth: 0, gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs, borderRadius: space.md, backgroundColor: colors.innerDark },
+  stageTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  stageDot: { width: size.indicator, height: size.indicator, borderRadius: radius.pill },
   action: { padding: space.lg, gap: space.xs },
 });

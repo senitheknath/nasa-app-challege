@@ -357,3 +357,247 @@ test('parses rotation plans when backend harvest_window is an object', () => {
   expect(plan?.rotations[0].slots[0].harvestWindow).toContain('–');
   expect(plan?.timeline[0].harvestWindow).toContain('–');
 });
+
+test('maps multi-crop rotation slots, best rotation highlights, and concise soil benefits', () => {
+  const dto = planSchema.parse({
+    hectares: 3.0,
+    strategyTag: 'Rainfed',
+    mode: 'continuous',
+    crop: {
+      id: 'rice',
+      name: 'Paddy Rice',
+      category: { id: 'Poaceae', label: 'Poaceae' },
+      yieldTonnesPerHectare: 4.5,
+      waterPercent: 50,
+    },
+    timeline: [],
+    rotations: [
+      {
+        id: 'rice__groundnut__cabbage__sweet_potato',
+        name: 'Paddy Rice → Groundnut → Cabbage → Sweet Potato',
+        rank: 1,
+        score: 92,
+        rating: 'Optimal',
+        summary: 'Very long verbose agronomic summary sentence that must never appear inside soilBenefit pills',
+        transition: {
+          status: 'good',
+          summary: 'Smooth residue transition',
+          benefits: ['Very long transition benefit sentence that should not spam the UI card'],
+        },
+        easiness_matrix: {
+          easiness_tier: 'Easy',
+          easiness_score: 86,
+        },
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              window: 'Maha 2026 (next year)',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-02-23',
+              growth_cycle_days: { minimum: 90, nominal: 100, maximum: 110 },
+              kc_max: 1.2,
+            },
+            {
+              crop_id: 'groundnut',
+              crop_name: 'Groundnut',
+              family: 'Fabaceae',
+              window: 'Yala 2027',
+              sowing_date: '2027-03-09',
+              harvest_nominal_date: '2027-06-17',
+              growth_cycle_days: { minimum: 95, nominal: 100, maximum: 110 },
+              kc_max: 1.15,
+            },
+            {
+              crop_id: 'cabbage',
+              crop_name: 'Cabbage',
+              family: 'Brassicaceae',
+              sowing_date: '2027-07-01',
+              harvest_nominal_date: '2027-09-29',
+              growth_cycle_days: { minimum: 85, nominal: 90, maximum: 100 },
+              kc_max: null,
+            },
+            {
+              crop_id: 'sweet_potato',
+              crop_name: 'Sweet Potato',
+              family: 'Convolvulaceae',
+              sowing_date: '2027-10-13',
+              harvest_nominal_date: '2028-01-21',
+              growth_cycle_days: { minimum: 90, nominal: 100, maximum: 115 },
+              kc_max: 1.0,
+            },
+          ],
+        },
+      },
+      {
+        id: 'rice__cowpea__maize',
+        name: 'Paddy Rice → Cowpea → Maize',
+        rank: 2,
+        score: 86,
+        rating: 'Good',
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-03-15',
+              kc_max: 0.2,
+            },
+            {
+              crop_id: 'cowpea',
+              crop_name: 'Cowpea',
+              family: 'Fabaceae',
+              sowing_date: '2027-03-29',
+              harvest_nominal_date: '2027-06-22',
+            },
+            {
+              crop_id: 'maize',
+              crop_name: 'Maize',
+              family: 'Poaceae',
+              sowing_date: '2027-07-06',
+              harvest_nominal_date: '2027-10-14',
+            },
+          ],
+        },
+      },
+      {
+        id: 'rice__sesame__tomato',
+        name: 'Paddy Rice → Sesame → Tomato',
+        rank: 3,
+        score: 82,
+        rating: 'Good',
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-03-15',
+            },
+            {
+              crop_id: 'sesame',
+              crop_name: 'Sesame',
+              family: 'Pedaliaceae',
+              sowing_date: '2027-03-29',
+              harvest_nominal_date: '2027-06-27',
+            },
+            {
+              crop_id: 'tomato',
+              crop_name: 'Tomato',
+              family: 'Solanaceae',
+              sowing_date: '2027-07-11',
+              harvest_nominal_date: '2027-10-09',
+            },
+          ],
+        },
+      },
+      {
+        id: 'rice__sorghum',
+        name: 'Paddy Rice → Sorghum',
+        rank: 4,
+        score: 76,
+        rating: 'Fair',
+        timeline: {
+          feasible: true,
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-03-15',
+            },
+            {
+              crop_id: 'sorghum',
+              crop_name: 'Sorghum',
+              family: null,
+              sowing_date: '2027-03-29',
+              harvest_nominal_date: '2027-07-07',
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const plan = mapPlan(dto);
+  expect(plan).not.toBeNull();
+  expect(plan?.timeline).toHaveLength(4);
+  const [best, alt2, alt3, alt4] = plan!.rotations;
+
+  expect(best.isBest).toBe(true);
+  expect(best.title).toBe('Best Rotation');
+  expect(best.badge).toBe('Highest yield & fit');
+  expect(best.cropCount).toBe(4);
+  expect(best.totalDays).toBe(390);
+  expect(best.period).toBe('Nov 2026 – Jan 2028 · 4 crops');
+
+  expect(best.slots[0]).toMatchObject({
+    order: 1,
+    status: 'Current',
+    shortSeason: 'Nov - Feb',
+    fullSeason: '15 Nov – 23 Feb · 100d',
+    actionPrefix: '',
+    actionHighlight: 'Paddy Rice',
+    yieldLabel: '4.5 t/ha',
+    waterPercent: 78,
+    soilBenefit: 'Builds root biomass',
+  });
+  expect(best.slots[1]).toMatchObject({
+    order: 2,
+    status: 'Upcoming',
+    shortSeason: 'Mar - Jun',
+    fullSeason: '9 Mar – 17 Jun · 100d',
+    actionPrefix: '',
+    actionHighlight: 'Groundnut',
+    waterPercent: 75,
+    soilBenefit: 'Fixes soil nitrogen',
+  });
+  expect(best.slots[2]).toMatchObject({
+    order: 3,
+    status: 'Planned',
+    shortSeason: 'Jul - Sep',
+    fullSeason: '1 Jul – 29 Sep · 90d',
+    actionPrefix: '',
+    actionHighlight: 'Cabbage',
+    waterPercent: 55,
+    soilBenefit: 'Breaks pest cycle',
+  });
+  expect(best.slots[3]).toMatchObject({
+    order: 4,
+    status: 'Planned',
+    shortSeason: 'Oct - Jan',
+    fullSeason: '13 Oct – 21 Jan · 100d',
+    actionPrefix: '',
+    actionHighlight: 'Sweet Potato',
+    soilBenefit: 'Improves soil structure',
+  });
+
+  expect(alt2.isBest).toBe(false);
+  expect(alt2.title).toBe('Alternative 2');
+  expect(alt2.badge).toBe('Improves nitrogen');
+  expect(alt2.cropCount).toBe(3);
+  expect(alt2.totalDays).toBe(285);
+  expect(alt2.period).toBe('Nov 2026 – Oct 2027 · 3 crops');
+  expect(alt2.slots[0].waterPercent).toBe(25);
+
+  expect(alt3.isBest).toBe(false);
+  expect(alt3.title).toBe('Alternative 3');
+  expect(alt3.badge).toBe('Breaks pest cycle');
+  expect(alt3.slots[1].soilBenefit).toBe('Deep moisture capture');
+
+  expect(alt4.isBest).toBe(false);
+  expect(alt4.title).toBe('Alternative 4');
+  expect(alt4.badge).toBe('Balanced cycle');
+  expect(alt4.cropCount).toBe(2);
+  expect(alt4.totalDays).toBe(190);
+  expect(alt4.slots[1].soilBenefit).toBe('Balances soil nutrients');
+});

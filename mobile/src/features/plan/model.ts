@@ -78,6 +78,15 @@ export const rotationOptionSchema = z.object({
   overall_status: z.string().optional(),
   summary: z.string().optional(),
   ease_adjusted_score: z.number().optional(),
+  transition: z.object({
+    status: z.string().nullable().optional(),
+    summary: z.string().nullable().optional(),
+    benefits: z.array(z.string()).nullable().optional(),
+  }).passthrough().nullable().optional(),
+  easiness_matrix: z.object({
+    easiness_tier: z.string().nullable().optional(),
+    easiness_score: z.number().nullable().optional(),
+  }).passthrough().nullable().optional(),
   timeline: z.object({
     overall_status: z.string().optional(),
     feasible: z.boolean().optional(),
@@ -157,6 +166,15 @@ export type MappedSlot = {
   daysUntilSafeExpiry?: number;
   daysUntilHardExpiry?: number;
   collisionProbabilityPct?: number;
+  order: number;
+  status: 'Current' | 'Upcoming' | 'Planned';
+  shortSeason: string;
+  fullSeason: string;
+  actionPrefix: string;
+  actionHighlight: string;
+  yieldLabel: string;
+  waterPercent: number;
+  soilBenefit: string;
 };
 
 export type RotationOption = {
@@ -187,6 +205,12 @@ export type RotationOption = {
     collisionProbabilityPct?: number;
   };
   slots: MappedSlot[];
+  period: string;
+  title: string;
+  badge: string;
+  isBest: boolean;
+  cropCount: number;
+  totalDays: number;
 };
 
 export type PlanSeason = {
@@ -266,12 +290,95 @@ function formatHarvestWindow(value?: z.infer<typeof harvestWindowSchema> | null)
   return single ? formatDate(single) : undefined;
 }
 
-function mapSlot(slot: SlotDto): MappedSlot {
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+function formatShortMonth(date: Date): string {
+  return SHORT_MONTHS[date.getMonth()];
+}
+
+function formatDayMonth(date: Date): string {
+  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}`;
+}
+
+function formatMonthYear(date: Date): string {
+  return `${SHORT_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+function getSlotDurationDays(slot: SlotDto, sowDate: Date | null, harvDate: Date | null): number {
+  if (slot.growth_cycle_days?.nominal && slot.growth_cycle_days.nominal > 0) {
+    return Math.round(slot.growth_cycle_days.nominal);
+  }
+  if (slot.stages?.length) {
+    const stageSum = slot.stages.reduce((sum, stage) => sum + Math.max(0, stage.duration_days), 0);
+    if (stageSum > 0) return Math.round(stageSum);
+  }
+  if (sowDate && harvDate) {
+    const diffDays = Math.round((harvDate.getTime() - sowDate.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) return diffDays;
+  }
+  return 95;
+}
+
+function deriveSoilBenefit(family?: string | null): string {
+  const f = (family ?? '').trim().toLowerCase();
+  if (f.includes('fabaceae') || f.includes('legume')) {
+    return 'Fixes soil nitrogen';
+  }
+  if (f.includes('poaceae') || f.includes('cereal') || f.includes('gramineae')) {
+    return 'Builds root biomass';
+  }
+  if (f.includes('brassicaceae') || f.includes('amaryllidaceae') || f.includes('solanaceae')) {
+    return 'Breaks pest cycle';
+  }
+  if (f.includes('convolvulaceae') || f.includes('euphorbiaceae') || f.includes('root') || f.includes('tuber')) {
+    return 'Improves soil structure';
+  }
+  if (f.includes('pedaliaceae') || f.includes('malvaceae') || f.includes('oilseed') || f.includes('asteraceae')) {
+    return 'Deep moisture capture';
+  }
+  return 'Balances soil nutrients';
+}
+
+function deriveRotationBadge(slots: readonly SlotDto[], index: number): string {
+  if (index === 0) return 'Highest yield & fit';
+  const families = slots
+    .map((slot) => (slot.family ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  if (families.some((family) => family.includes('fabaceae') || family.includes('legume'))) {
+    return 'Improves nitrogen';
+  }
+  if (new Set(families).size >= 3) {
+    return 'Breaks pest cycle';
+  }
+  return 'Balanced cycle';
+}
+
+function mapSlot(slot: SlotDto, index: number): MappedSlot {
+  const sowDate = parseCalendarDate(slot.sowing_date);
+  const harvDate = parseCalendarDate(slot.harvest_nominal_date);
   const sowingDate = formatDate(slot.sowing_date);
   const harvestDate = formatDate(slot.harvest_nominal_date);
+  const dateSpan = `${sowingDate} → ${harvestDate}`;
   const growthDays = slot.growth_cycle_days
     ? `${slot.growth_cycle_days.nominal}d (${slot.growth_cycle_days.minimum}–${slot.growth_cycle_days.maximum}d)`
     : undefined;
+  const order = index + 1;
+  const status: MappedSlot['status'] = index === 0 ? 'Current' : index === 1 ? 'Upcoming' : 'Planned';
+  const durationDays = getSlotDurationDays(slot, sowDate, harvDate);
+  const shortSeason = sowDate && harvDate
+    ? `${formatShortMonth(sowDate)} - ${formatShortMonth(harvDate)}`
+    : slot.window
+      ? slot.window.replace(/\s*\(next year\)/i, '')
+      : `Cycle ${order}`;
+  const fullSeason = sowDate && harvDate
+    ? `${formatDayMonth(sowDate)} – ${formatDayMonth(harvDate)} · ${durationDays}d`
+    : (slot.window || dateSpan);
+  const actionPrefix = '';
+  const actionHighlight = slot.crop_name;
+  const waterPercent = slot.kc_max != null
+    ? Math.round(Math.min(95, Math.max(25, slot.kc_max * 65)))
+    : 55;
+  const soilBenefit = deriveSoilBenefit(slot.family);
   return {
     cropId: slot.crop_id,
     cropName: slot.crop_name,
@@ -279,7 +386,7 @@ function mapSlot(slot: SlotDto): MappedSlot {
     window: slot.window ?? undefined,
     sowingDate,
     harvestDate,
-    dateSpan: `${sowingDate} → ${harvestDate}`,
+    dateSpan,
     harvestWindow: formatHarvestWindow(slot.harvest_window),
     growthDays,
     stages: mapStages(slot.stages ?? undefined),
@@ -291,12 +398,38 @@ function mapSlot(slot: SlotDto): MappedSlot {
     daysUntilSafeExpiry: slot.days_until_safe_expiry ?? undefined,
     daysUntilHardExpiry: slot.days_until_hard_expiry ?? undefined,
     collisionProbabilityPct: slot.collision_probability_pct ?? undefined,
+    order,
+    status,
+    shortSeason,
+    fullSeason,
+    actionPrefix,
+    actionHighlight,
+    yieldLabel: '4.5 t/ha',
+    waterPercent,
+    soilBenefit,
   };
 }
 
-function mapRotation(rot: RotationOptionDto): RotationOption {
+function mapRotation(rot: RotationOptionDto, index: number): RotationOption {
   const tl = rot.timeline;
   const collision = tl.collision_probability_pct ?? tl.uncertainty_cone?.collision_probability_pct ?? undefined;
+  const slots = tl.slots.map((slot, slotIndex) => mapSlot(slot, slotIndex));
+  const isBest = index === 0 || rot.rank === 1;
+  const cropCount = slots.length;
+  const hasExplicitCycleDays = tl.slots.some((slot) => slot.growth_cycle_days?.nominal != null);
+  const totalDays = hasExplicitCycleDays
+    ? tl.slots.reduce((sum, slot) => sum + (slot.growth_cycle_days?.nominal ?? 95), 0)
+    : cropCount * 95;
+  const firstSow = tl.slots.length > 0 ? parseCalendarDate(tl.slots[0].sowing_date) : null;
+  const lastHarv = tl.slots.length > 0 ? parseCalendarDate(tl.slots[tl.slots.length - 1].harvest_nominal_date) : null;
+  const cropUnit = cropCount === 1 ? '1 crop' : `${cropCount} crops`;
+  const period = slots.length > 0
+    ? (firstSow && lastHarv
+      ? `${formatMonthYear(firstSow)} – ${formatMonthYear(lastHarv)} · ${cropUnit}`
+      : `${slots[0].sowingDate} – ${slots[slots.length - 1].harvestDate} · ${cropUnit}`)
+    : '';
+  const title = index === 0 ? 'Best Rotation' : `Alternative ${index + 1}`;
+  const badge = deriveRotationBadge(tl.slots, index);
   return {
     id: rot.id,
     name: rot.name,
@@ -328,13 +461,19 @@ function mapRotation(rot: RotationOptionDto): RotationOption {
           collisionProbabilityPct: tl.uncertainty_cone.collision_probability_pct,
         }
       : undefined,
-    slots: tl.slots.map(mapSlot),
+    slots,
+    period,
+    title,
+    badge,
+    isBest,
+    cropCount,
+    totalDays,
   };
 }
 
 export function mapPlan(dto: PlanDto): Plan | null {
   if (!dto) return null;
-  const rotations = (dto.rotations ?? []).map(mapRotation);
+  const rotations = (dto.rotations ?? []).map((rot, index) => mapRotation(rot, index));
   const crop = mapCrop(dto.crop);
 
   let timeline: PlanSeason[] = dto.timeline.map((season) => {
@@ -365,8 +504,8 @@ export function mapPlan(dto: PlanDto): Plan | null {
   if (!timeline.length && rotations.length > 0 && rotations[0].slots.length > 0) {
     timeline = rotations[0].slots.map((slot, idx) => ({
       id: `${rotations[0].id}-slot-${idx + 1}`,
-      season: slot.window || `Slot ${idx + 1}`,
-      label: slot.window || `Cycle ${idx + 1}`,
+      season: slot.window || slot.shortSeason,
+      label: slot.window || slot.fullSeason,
       crop: {
         ...crop,
         id: slot.cropId,

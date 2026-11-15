@@ -44,6 +44,60 @@
   let completedPolygon = null;
   let firstPointMarker = null;
 
+  function computeVerticesCentroid(vertices) {
+    if (!Array.isArray(vertices) || vertices.length === 0) return null;
+    let sumLat = 0;
+    let sumLng = 0;
+    let count = 0;
+    vertices.forEach(pt => {
+      const lat = pt && pt.lat !== undefined ? Number(pt.lat) : Number(pt && pt.latitude);
+      const lng = pt && pt.lng !== undefined ? Number(pt.lng) : Number(pt && pt.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        sumLat += lat;
+        sumLng += lng;
+        count += 1;
+      }
+    });
+    if (count === 0) return null;
+    return { lat: sumLat / count, lng: sumLng / count };
+  }
+
+  function prefetchSatelliteCache(lat, lng, boundaryCoords, areaHa) {
+    const userData = window.TerraforgeUserData || window.TerraforgeInput;
+    if (userData && typeof userData.prefetchSatelliteData === 'function') {
+      return userData.prefetchSatelliteData(lat, lng, boundaryCoords, areaHa);
+    }
+    if (typeof fetch !== 'function') return Promise.resolve();
+    const numLat = Number(lat);
+    const numLng = Number(lng);
+    if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return Promise.resolve();
+
+    let boundary;
+    if (Array.isArray(boundaryCoords) && boundaryCoords.length >= 3) {
+      const ring = boundaryCoords
+        .map(pt => [Number(pt.lng !== undefined ? pt.lng : pt.longitude), Number(pt.lat !== undefined ? pt.lat : pt.latitude)])
+        .filter(([lon, lt]) => Number.isFinite(lon) && Number.isFinite(lt));
+      if (ring.length >= 3) {
+        if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+          ring.push([ring[0][0], ring[0][1]]);
+        }
+        boundary = { type: 'Polygon', coordinates: [ring] };
+      }
+    }
+
+    return fetch('/api/earth-data/prefetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        country: 'LK',
+        latitude: numLat,
+        longitude: numLng,
+        boundary,
+        area_ha: typeof areaHa === 'number' && Number.isFinite(areaHa) ? areaHa : undefined
+      })
+    }).catch(() => {});
+  }
+
   // =========================================================================
   // 1. Initialization
   // =========================================================================
@@ -241,6 +295,7 @@
     if (vertices.length === 1) {
       firstPointMarker = marker;
       marker.bindTooltip('Click here to close boundary', { permanent: false, direction: 'top' });
+      prefetchSatelliteCache(clickedLatLng.lat, clickedLatLng.lng);
     }
 
     updateDrawingPolyline();
@@ -325,6 +380,11 @@
 
     renderCompletedPolygon(uiState.polygonVertices);
     updateParcelHUD();
+
+    const centroid = computeVerticesCentroid(uiState.polygonVertices);
+    if (centroid) {
+      prefetchSatelliteCache(centroid.lat, centroid.lng, uiState.polygonVertices, uiState.parcelAreaHa);
+    }
 
     showNotification('Field Demarcated', `Parcel closed with ${uiState.polygonVertices.length} vertices across ${uiState.parcelAreaHa.toFixed(1)} hectares.`);
 
@@ -485,6 +545,11 @@
     renderCompletedPolygon(sampleVertices);
     updateParcelHUD();
 
+    const centroid = computeVerticesCentroid(sampleVertices);
+    if (centroid) {
+      prefetchSatelliteCache(centroid.lat, centroid.lng, sampleVertices, uiState.parcelAreaHa);
+    }
+
     const continueBtn = document.getElementById('btnContinueToCrops');
     if (continueBtn) continueBtn.style.display = 'inline-flex';
 
@@ -529,6 +594,9 @@
       if (dropdown) dropdown.style.display = 'none';
       searchInput.value = name;
       if (clearBtn) clearBtn.style.display = 'flex';
+      if (Array.isArray(coords) && coords.length >= 2) {
+        prefetchSatelliteCache(coords[0], coords[1]);
+      }
     }
 
     searchInput.addEventListener('input', () => {

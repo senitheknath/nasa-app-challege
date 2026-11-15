@@ -13,6 +13,7 @@ export const monitorRequestSchema = z.object({
   observed_ndvi: z.number().nullable().optional(),
   weather_volatility: z.number().optional(),
   max_sequences: z.number().optional(),
+  stage: z.enum(['fast', 'full']).optional(),
 });
 
 export const terrainVertexSchema = z.object({
@@ -115,6 +116,37 @@ export const liveRotationSchema = z.object({
   live_state: liveStateSchema,
 }).passthrough();
 
+export const convergenceStepSchema = z.object({
+  step: z.number(),
+  source: z.string(),
+  input_value: z.number(),
+  input_sigma: z.number(),
+  fused_value: z.number(),
+  fused_sigma: z.number(),
+  variance_reduction_pct: z.number(),
+}).passthrough();
+
+export const moistureFusionSchema = z.object({
+  fused_value: z.number().optional(),
+  fused_sigma: z.number().optional(),
+  min_input_sigma: z.number().optional(),
+  variance_reduction_pct: z.number().optional(),
+  fused_moisture_pct: z.number().optional(),
+  sensor_count: z.number().optional(),
+  sources_used: z.array(z.string()).optional(),
+  fusion_stage: z.string().optional(),
+  convergence_steps: z.array(convergenceStepSchema).optional(),
+}).passthrough();
+
+export const sensorFusionSchema = z.object({
+  stack: z.array(z.string()).default([]),
+  moisture_fusion_3way: moistureFusionSchema.optional(),
+  combined_parcel_dt_days: z.number().nullable().optional(),
+  parcel_mean_moisture_conserved_pct: z.number().optional(),
+  fusion_stage: z.string().optional(),
+  convergence_steps: z.array(convergenceStepSchema).optional(),
+}).passthrough();
+
 export const slab3dSchema = z.object({
   location: z.object({
     country: z.string(),
@@ -135,12 +167,7 @@ export const slab3dSchema = z.object({
   terrain_3d_mesh: terrainMeshSchema,
   soil_3d_horizons: z.array(soilHorizonSchema),
   update_frequencies: z.record(z.string(), z.unknown()),
-  sensor_fusion: z.object({
-    stack: z.array(z.string()).default([]),
-    moisture_fusion_3way: z.record(z.string(), z.unknown()).optional(),
-    combined_parcel_dt_days: z.number().nullable().optional(),
-    parcel_mean_moisture_conserved_pct: z.number().optional(),
-  }).passthrough(),
+  sensor_fusion: sensorFusionSchema,
 });
 
 export const monitorResponseSchema = z.object({
@@ -217,6 +244,9 @@ export type MonitorRequestDto = z.infer<typeof monitorRequestSchema>;
 export type MonitorResponseDto = z.infer<typeof monitorResponseSchema>;
 export type SatelliteResponseDto = z.infer<typeof satelliteResponseSchema>;
 export type ClimateResponseDto = z.infer<typeof climateResponseSchema>;
+export type ConvergenceStepDto = z.infer<typeof convergenceStepSchema>;
+export type MoistureFusionDto = z.infer<typeof moistureFusionSchema>;
+export type SensorFusionDto = z.infer<typeof sensorFusionSchema>;
 export type Slab3DDto = z.infer<typeof slab3dSchema>;
 export type TerrainVertexDto = z.infer<typeof terrainVertexSchema>;
 export type SoilHorizonDto = z.infer<typeof soilHorizonSchema>;
