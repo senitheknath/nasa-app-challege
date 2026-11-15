@@ -1,7 +1,7 @@
 """Data contracts and configuration for the crop rotation engine."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 Severity = Literal["blocker", "caution", "benefit"]
@@ -105,16 +105,36 @@ class CropProfile:
         return None
 
 
+MIN_EXPIRY_BUFFER_DAYS = 0
+MAX_EXPIRY_BUFFER_DAYS = 35
+DEFAULT_EXPIRY_BUFFER_DAYS = 7
+
+
+def clamp_expiry_buffer_days(value: int) -> int:
+    """Clamp expiry safety buffer days to the supported agronomic range [0, 35]."""
+    if isinstance(value, bool):
+        raise ValueError("expiry_buffer_days must be an integer, not a boolean")
+    return max(MIN_EXPIRY_BUFFER_DAYS, min(MAX_EXPIRY_BUFFER_DAYS, int(value)))
+
+
 @dataclass(frozen=True)
 class RotationConfig:
     """Configurable agronomic thresholds without hardcoded domain literals."""
 
     min_rooting_delta_m: float = 0.4
     min_turnaround_days: int = 0
+    expiry_buffer_days: int = DEFAULT_EXPIRY_BUFFER_DAYS
     nitrogen_fixing_families: frozenset[str] = frozenset({"Fabaceae"})
     heavy_feeding_families: frozenset[str] = frozenset({"Poaceae", "Solanaceae"})
     max_candidate_pool: int = 10
     max_sequences: int = 16
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "expiry_buffer_days",
+            clamp_expiry_buffer_days(self.expiry_buffer_days),
+        )
 
 
 @dataclass(frozen=True)

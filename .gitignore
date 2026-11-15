@@ -8,6 +8,12 @@ __pycache__/
 artifacts/
 .coverage
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
-*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3*
+*.pyc
+.DS_Store
 notes/

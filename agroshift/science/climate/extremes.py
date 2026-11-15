@@ -1,7 +1,6 @@
 """Multi-year extreme weather diagnostics and stage-aware agro-climatic risk assessment."""
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from agroshift.science.climate.climate import dry_spell

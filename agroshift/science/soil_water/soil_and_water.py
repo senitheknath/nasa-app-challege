@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from agroshift.science.climate.climate import Window, compute_daily_agromet_indices
+from agroshift.science.climate.climate import Window
 from agroshift.science.climate.power import coordinates
 
 

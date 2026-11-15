@@ -8,15 +8,17 @@ physical calendar milestones, stage dates, turnaround buffers, and delay slack.
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any, Sequence
+from typing import Any
 
-from .contracts import CropProfile, EnvironmentContext, RotationConfig
+from .contracts import (
+    DEFAULT_EXPIRY_BUFFER_DAYS,
+    CropProfile,
+    RotationConfig,
+    clamp_expiry_buffer_days,
+)
 from .timeline_core import (
     ActivityNode,
-    ArcConstraint,
-    ScheduledSlot,
     Trajectory,
-    solve_trajectories,
 )
 
 
@@ -85,12 +87,38 @@ def _phase_intervals(start_t: int, duration: int, fractions: tuple[float, ...]) 
     return intervals
 
 
-def _turnaround_summary(buffer_days: int) -> dict[str, Any]:
+def compute_collision_probability(end_min: int, end_max: int, deadline_t: int) -> float:
+    """Compute harvest-to-next-planting collision probability (%) across [end_min, end_max]."""
+    if end_max <= deadline_t:
+        return 0.0
+    if end_min > deadline_t:
+        return 100.0
+    span = max(1, end_max - end_min)
+    return round(max(0.0, min(100.0, ((end_max - deadline_t) / span) * 100.0)), 1)
+
+
+def resolve_expiry_buffer_days(
+    expiry_buffer_days: int | None = None,
+    config: RotationConfig | None = None,
+) -> int:
+    """Resolve and clamp expiry safety buffer days from explicit arg or RotationConfig."""
+    if expiry_buffer_days is not None:
+        return clamp_expiry_buffer_days(expiry_buffer_days)
+    if config is not None:
+        return clamp_expiry_buffer_days(config.expiry_buffer_days)
+    return DEFAULT_EXPIRY_BUFFER_DAYS
+
+
+def _turnaround_summary(
+    buffer_days: int,
+    *,
+    min_buffer: int = DEFAULT_EXPIRY_BUFFER_DAYS,
+) -> dict[str, Any]:
     """Classify turnaround gap between consecutive slots."""
     if buffer_days < 0:
         buf_status = "collision"
         buf_desc = f"Season 1 harvest collides with Season 2 planting by {abs(buffer_days)} days."
-    elif buffer_days < 7:
+    elif buffer_days < min_buffer:
         buf_status = "tight"
         buf_desc = f"{buffer_days}-day turnaround is tight; high risk if late rains delay harvest."
     elif buffer_days <= 35:
@@ -181,13 +209,9 @@ def build_physical_timeline(
             safe_expiry_t = nxt_latest - min_buf - d_max
             hard_expiry_t = nxt_latest - min_buf - d_nom
             deadline_t = nxt_latest - min_buf
-            if slot.end_t_max <= deadline_t:
-                collision_prob = 0.0
-            elif slot.end_t_min > deadline_t:
-                collision_prob = 100.0
-            else:
-                span = max(1, slot.end_t_max - slot.end_t_min)
-                collision_prob = round(max(0.0, min(100.0, ((slot.end_t_max - deadline_t) / span) * 100.0)), 1)
+            collision_prob = compute_collision_probability(
+                slot.end_t_min, slot.end_t_max, deadline_t
+            )
         else:
             own_latest = slot.latest_start if slot.latest_start is not None else slot.start_t + slot.delay_slack
             hard_expiry_t = own_latest
@@ -354,10 +378,12 @@ def build_direct_pair_timeline(
     *,
     ref_year: int = 2024,
     continuous: bool = False,
+    expiry_buffer_days: int | None = None,
+    config: RotationConfig | None = None,
 ) -> dict[str, Any]:
     """Compute a two-crop physical timeline using direct date/day interval arithmetic."""
     base_jan1 = date(ref_year, 1, 1)
-    min_buffer = 7
+    min_buffer = resolve_expiry_buffer_days(expiry_buffer_days, config)
     optimal_buffer = 21
 
     # Slot 1
@@ -397,16 +423,7 @@ def build_direct_pair_timeline(
     safe_expiry_t_1 = latest_start_2 - min_buffer - d1_max
     hard_expiry_t_1 = latest_start_2 - min_buffer - d1_nom
     deadline_t_1 = latest_start_2 - min_buffer
-
-    if end_1_max <= deadline_t_1:
-        collision_prob_1 = 0.0
-    elif end_1_min > deadline_t_1:
-        collision_prob_1 = 100.0
-    else:
-        span_1 = max(1, end_1_max - end_1_min)
-        collision_prob_1 = round(
-            max(0.0, min(100.0, ((end_1_max - deadline_t_1) / span_1) * 100.0)), 1
-        )
+    collision_prob_1 = compute_collision_probability(end_1_min, end_1_max, deadline_t_1)
 
     delay_slack_2 = max(0, latest_start_2 - start_2)
     hard_expiry_t_2 = latest_start_2
@@ -477,6 +494,6 @@ def build_direct_pair_timeline(
             "slot_2_span_days": slot_2["uncertainty_cone"]["span_days"],
             "collision_probability_pct": slot_1["collision_probability_pct"],
         },
-        "turnaround_summary": _turnaround_summary(turnaround_buffer_1),
+        "turnaround_summary": _turnaround_summary(turnaround_buffer_1, min_buffer=min_buffer),
         "slots": [slot_1, slot_2],
     }

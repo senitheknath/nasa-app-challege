@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 from agroshift.climate import Window
 from agroshift.decision import Farm
 from agroshift.power import load_snapshot
-from agroshift.rotation import engine as rotation_engine
+from agroshift.rotation import CropProfile, RotationConfig, engine as rotation_engine
 from agroshift.rotation import plan_global_rotations
 from agroshift.rotation import timeline_adapter
 from api.server import app
@@ -236,3 +236,197 @@ def test_api_agronomy_rotations_polygon_boundary_and_monitor_3d_start_date():
     assert "slab_3d" in mon_body
     plain = (mon_body.get("live_rotation_monitor") or {}).get("plain_rotations") or []
     assert len(plain) > 0
+
+
+def test_rotation_config_expiry_buffer_days_clamping_and_validation():
+    assert RotationConfig().expiry_buffer_days == 7
+    assert RotationConfig(expiry_buffer_days=-10).expiry_buffer_days == 0
+    assert RotationConfig(expiry_buffer_days=99).expiry_buffer_days == 35
+    assert RotationConfig(expiry_buffer_days=14).expiry_buffer_days == 14
+
+    try:
+        RotationConfig(expiry_buffer_days=True)  # type: ignore[arg-type]
+        raise AssertionError("Expected ValueError for bool expiry_buffer_days")
+    except ValueError:
+        pass
+
+
+def test_build_direct_pair_timeline_respects_expiry_buffer_days():
+    p1 = CropProfile(
+        id="wide_c1",
+        name="Wide C1",
+        family="Poaceae",
+        traits={"indicative_cycle_duration": {"low": 90, "high": 140}},
+    )
+    p2 = CropProfile(
+        id="pea",
+        name="Pea",
+        family="Fabaceae",
+        is_nitrogen_fixer=True,
+        traits={"indicative_cycle_duration": {"low": 80, "high": 100}},
+    )
+    w1 = Window(4, 1, 7, 30)
+    w2 = Window(10, 1, 1, 20)
+    s1_card = {"status": "possible"}
+    s2_card = {"status": "possible"}
+    trans = {"status": "complementary"}
+
+    tl_flex = timeline_adapter.build_direct_pair_timeline(
+        p1,
+        p2,
+        w1,
+        w2,
+        s1_card,
+        s2_card,
+        trans,
+        continuous=True,
+        config=RotationConfig(expiry_buffer_days=3),
+    )
+    tl_default = timeline_adapter.build_direct_pair_timeline(
+        p1,
+        p2,
+        w1,
+        w2,
+        s1_card,
+        s2_card,
+        trans,
+        continuous=True,
+    )
+    tl_strict = timeline_adapter.build_direct_pair_timeline(
+        p1,
+        p2,
+        w1,
+        w2,
+        s1_card,
+        s2_card,
+        trans,
+        continuous=True,
+        expiry_buffer_days=21,
+    )
+
+    assert tl_flex["days_until_hard_expiry"] > tl_default["days_until_hard_expiry"]
+    assert tl_default["days_until_hard_expiry"] - tl_strict["days_until_hard_expiry"] == 14
+    assert tl_default["days_until_safe_expiry"] - tl_strict["days_until_safe_expiry"] == 14
+    assert tl_strict["collision_probability_pct"] > tl_default["collision_probability_pct"]
+    assert tl_strict["feasible"] is False
+    assert tl_strict["turnaround_summary"]["status"] == "tight"
+
+
+def test_extend_timeline_with_followup_crops_computes_slot3_collision_and_uses_buffer():
+    p1 = CropProfile(
+        id="c1",
+        name="Crop 1",
+        family="Poaceae",
+        traits={"indicative_cycle_duration": {"low": 90, "high": 110}},
+    )
+    p2 = CropProfile(
+        id="c2",
+        name="Crop 2",
+        family="Fabaceae",
+        is_nitrogen_fixer=True,
+        traits={"indicative_cycle_duration": {"low": 80, "high": 100}},
+    )
+    # Duration bounds: min=80, nom=110, max=140 -> span=60, (d_max - d_nom)=30
+    p3 = CropProfile(
+        id="c3",
+        name="Crop 3",
+        family="Brassicaceae",
+        traits={"indicative_cycle_duration": {"low": 80, "high": 140}},
+    )
+    p4 = CropProfile(
+        id="c4",
+        name="Crop 4",
+        family="Apiaceae",
+        traits={"indicative_cycle_duration": {"low": 75, "high": 95}},
+    )
+    profiles = {"c1": p1, "c2": p2, "c3": p3, "c4": p4}
+    cards = {cid: {"status": "possible"} for cid in profiles}
+
+    w1 = Window(4, 1, 7, 30)
+    w2 = Window(10, 1, 1, 20)
+    base_tl = timeline_adapter.build_direct_pair_timeline(
+        p1,
+        p2,
+        w1,
+        w2,
+        cards["c1"],
+        cards["c2"],
+        {"status": "complementary"},
+        continuous=True,
+        config=RotationConfig(expiry_buffer_days=14),
+    )
+
+    rotation_engine._extend_timeline_with_followup_crops(
+        base_tl,
+        c1_id="c1",
+        c2_id="c2",
+        follow_pool=["c3", "c4"],
+        profiles=profiles,
+        cards_s1=cards,
+        cards_s2=cards,
+        target_slots=4,
+        config=RotationConfig(expiry_buffer_days=14),
+    )
+
+    slots = base_tl["slots"]
+    assert len(slots) == 4
+    slot3 = slots[2]
+    slot4 = slots[3]
+
+    # For Slot 3 (!is_last): turnaround=14, buffer=14, slack window=21
+    # deadline = start + 110 + 14 + 21 - 14 = start + 131
+    # hard_expiry = deadline - 110 = start + 21; safe_expiry = deadline - 140 = start - 9
+    # end_min = start + 80, end_max = start + 140, span = 60 => (140 - 131) / 60 * 100 = 15.0%
+    assert slot3["collision_probability_pct"] == 15.0
+    assert slot3["days_until_hard_expiry"] == 21
+    assert slot3["days_until_safe_expiry"] == -9
+    assert slot4["collision_probability_pct"] == 0.0
+
+
+def test_api_agronomy_rotations_accepts_and_applies_expiry_buffer_days():
+    client = TestClient(app)
+    base_payload = {
+        "country": "LK",
+        "latitude": 8.3114,
+        "longitude": 80.4037,
+        "start_date": "2026-04-01",
+        "max_sequences": 4,
+        "candidate_crop_ids": ["maize", "mung_bean", "rice"],
+    }
+
+    r_default = client.post("/api/agronomy/rotations", json=base_payload)
+    assert r_default.status_code == 200, r_default.text
+    b_default = r_default.json()
+    assert b_default["threshold_config"] == {"expiry_buffer_days": 7}
+
+    r_strict = client.post(
+        "/api/agronomy/rotations",
+        json={**base_payload, "expiry_buffer_days": 21},
+    )
+    assert r_strict.status_code == 200, r_strict.text
+    b_strict = r_strict.json()
+    assert b_strict["threshold_config"] == {"expiry_buffer_days": 21}
+
+    by_id_default = {p["id"]: p for p in b_default["rotations"]}
+    by_id_strict = {p["id"]: p for p in b_strict["rotations"]}
+    common_ids = set(by_id_default) & set(by_id_strict)
+    assert common_ids
+    pid = sorted(common_ids)[0]
+    assert (
+        by_id_default[pid]["timeline"]["days_until_hard_expiry"]
+        - by_id_strict[pid]["timeline"]["days_until_hard_expiry"]
+        == 14
+    )
+
+    r_clamped = client.post(
+        "/api/agronomy/rotations",
+        json={**base_payload, "expiry_buffer_days": 100},
+    )
+    assert r_clamped.status_code == 200, r_clamped.text
+    assert r_clamped.json()["threshold_config"] == {"expiry_buffer_days": 35}
+
+    r_invalid = client.post(
+        "/api/agronomy/rotations",
+        json={**base_payload, "expiry_buffer_days": True},
+    )
+    assert r_invalid.status_code == 400

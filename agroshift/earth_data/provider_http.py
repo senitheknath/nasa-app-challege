@@ -26,7 +26,7 @@ else:
     ROOT = Path(__file__).resolve().parents[2]
 ARCHIVES = ROOT / "data" / "provider_samples"
 DB_CACHE_PATH: Path | None = DEFAULT_DB_PATH
-MAX_BYTES = 1_000_000
+MAX_BYTES = 3_000_000
 _cache = OrderedDict()
 _locks = [threading.Lock() for _ in range(53)]
 _guard = threading.Lock()

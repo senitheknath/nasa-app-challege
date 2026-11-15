@@ -308,7 +308,7 @@ def test_six_layer_evidence_combination_and_non_double_counting():
         windows=(Window(5, 1, 9, 30),),
         ph=6.4,
         drainage="well_drained",
-        current="wheat",
+        current="sorghum",
     )
     cards = {c["id"]: c for c in find_options(farm, ds)}
     maize_card = cards["maize"]
@@ -316,13 +316,13 @@ def test_six_layer_evidence_combination_and_non_double_counting():
         maize_card,
         farm,
         crop_identity=crop_by_id("maize"),
-        previous_crop_identity=crop_by_id("wheat"),
+        previous_crop_identity=crop_by_id("sorghum"),
         modelled_soil={"value": 5.8, "q05": 5.2, "q95": 6.5},
     )
     assert layers["classification_code"] in CLASSIFICATION_LABELS
     assert layers["layer_d_correlated_models"]["correlated_reanalysis_double_counted"] is False
     assert layers["layer_e_farmer_context"]["same_family_succession_warning"] is not None
-    # Because wheat -> maize is Poaceae -> Poaceae, Layer F classifies as conditional compatibility
+    # Because sorghum -> maize is Poaceae -> Poaceae, Layer F classifies as conditional compatibility
     assert layers["classification_code"] == "conditional_compatibility"
 
 
@@ -339,12 +339,12 @@ def test_global_rotation_planner_and_pest_context():
         irrigation_mm=300.0,
         rain_fraction=0.7,
     )
-    plans = plan_global_rotations(farm, ds, candidate_crop_ids=["wheat", "dry_pea", "sugarcane"])
+    plans = plan_global_rotations(farm, ds, candidate_crop_ids=["oat", "dry_pea", "sugarcane"])
     assert plans
     by_id = {p["id"]: p for p in plans}
-    assert by_id["wheat_then_dry_pea"]["overall_status"] == "complementary"
-    assert by_id["wheat_then_wheat"]["overall_status"] == "caution"
-    assert by_id["sugarcane_then_wheat"]["overall_status"] == "blocked"
+    assert by_id["oat_then_dry_pea"]["overall_status"] == "complementary"
+    assert by_id["oat_then_oat"]["overall_status"] == "caution"
+    assert by_id["sugarcane_then_oat"]["overall_status"] == "blocked"
 
     pest = evaluate_crop_pest_context("maize", ds.frame, farm.windows[0])
     assert pest["status"] == "verified"

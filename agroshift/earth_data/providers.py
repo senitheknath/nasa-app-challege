@@ -37,6 +37,7 @@ CALENDAR = "https://api-cropcalendar.apps.fao.org/api/v1/countries"
 SOIL = "https://maps.isric.org/mapserv"
 GAEZ = "https://data.apps.fao.org/catalog/dataset/514c92d5-9e01-4c70-814a-80ea1ca9fe6a"
 GAEZ_SUMMARY = "https://data.apps.fao.org/catalog/dataset/a55c337e-f7e6-4d2f-aa8e-6d2199171c37/resource/30c09503-8f35-447c-a1c6-d6c53d601335/download/gaez-sample.csv"
+ECOCROP_CSV = "https://raw.githubusercontent.com/OpenCLIM/ecocrop/main/EcoCrop_DB.csv"
 FAOSTAT = "https://www.fao.org/faostat/en/#data/QCL"
 GAEZ_CROPS = {
     "Maize": "MZE",
@@ -716,4 +717,90 @@ def match_crop_calendar(window, calendar_rows: list[dict] | None, crop_name: str
         "sowing_date_confirmed": bool(matched),
         "farmer_window_preserved": True,
         "summary": summary,
+    }
+
+
+def _to_float(val: Any) -> float | None:
+    try:
+        s = str(val).strip()
+        if not s or s.lower() in {"na", "none", "null"}:
+            return None
+        v = float(s)
+        return v if math.isfinite(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=2)
+def _ecocrop_dataset(*, offline: bool = False, record: bool = False) -> dict:
+    def _parse(body: bytes) -> list[dict[str, Any]]:
+        rows = csv.DictReader(StringIO(body.decode("utf-8-sig", errors="replace")))
+        out = []
+        for r in rows:
+            sci = (r.get("ScientificName") or "").strip()
+            if not sci:
+                continue
+            out.append(
+                {
+                    "ecoport_code": r.get("EcoPortCode"),
+                    "scientific_name": sci,
+                    "synonyms": (r.get("SYNO") or "").strip(),
+                    "common_names": (r.get("COMNAME") or "").strip(),
+                    "family": (r.get("FAMNAME") or "").split(":")[-1].strip(),
+                    "life_span": (r.get("LISPA") or "").strip(),
+                    "temp_opt_min_c": _to_float(r.get("TOPMN")),
+                    "temp_opt_max_c": _to_float(r.get("TOPMX")),
+                    "temp_abs_min_c": _to_float(r.get("TMIN")),
+                    "temp_abs_max_c": _to_float(r.get("TMAX")),
+                    "ph_opt_min": _to_float(r.get("PHOPMN")),
+                    "ph_opt_max": _to_float(r.get("PHOPMX")),
+                    "ph_abs_min": _to_float(r.get("PHMIN")),
+                    "ph_abs_max": _to_float(r.get("PHMAX")),
+                    "rain_opt_min_mm": _to_float(r.get("ROPMN")),
+                    "rain_opt_max_mm": _to_float(r.get("ROPMX")),
+                    "cycle_min_days": _to_float(r.get("GMIN")),
+                    "cycle_max_days": _to_float(r.get("GMAX")),
+                    "drainage": (r.get("DRA") or "").strip(),
+                    "texture": (r.get("TEXT") or "").strip(),
+                    "salinity": (r.get("SAL") or "").strip(),
+                }
+            )
+        return out
+
+    return reference(
+        ECOCROP_CSV,
+        {},
+        _parse,
+        kind="crop_ecological_reference",
+        detail="FAO EcoCrop species-level ecological bounds (OpenCLIM EcoCrop_DB.csv). Expert screening estimates, not cultivar trials.",
+        offline=offline,
+        record=record,
+        source="https://github.com/OpenCLIM/ecocrop/blob/main/EcoCrop_DB.csv",
+    )
+
+
+def ecocrop_traits(query: str, *, offline: bool = False, record: bool = False) -> dict:
+    """Fetch species-level FAO EcoCrop ecological bounds from OpenCLIM EcoCrop_DB.csv."""
+    q = str(query or "").strip()
+    if len(q) < 2:
+        raise DataError("Enter a scientific or common crop name (at least 2 characters).")
+
+    res = _ecocrop_dataset(offline=offline, record=record)
+    if res.get("status") != "verified" or not isinstance(res.get("value"), list):
+        return res
+
+    q_low = q.casefold()
+    rows = res["value"]
+    match = next((r for r in rows if r["scientific_name"].casefold() == q_low), None)
+    if match is None:
+        match = next((r for r in rows if q_low in r["synonyms"].casefold()), None)
+    if match is None:
+        match = next((r for r in rows if q_low in r["common_names"].casefold() or q_low in r["scientific_name"].casefold()), None)
+
+    if match is None:
+        return _missing(ECOCROP_CSV, "crop_ecological_reference", f"No FAO EcoCrop match found for '{q}'.")
+
+    return {
+        **res,
+        "value": match,
     }

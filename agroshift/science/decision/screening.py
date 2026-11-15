@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from agroshift.science.decision.decision import CROPS, CRITERIA, KNOWLEDGE, MIN_SEASONS, assess, verify_climate
+from agroshift.science.decision.decision import MIN_SEASONS, verify_climate
 from agroshift.science.knowledge.knowledge import global_traits, screening_candidates
 from agroshift.science.climate.power import DataError
 

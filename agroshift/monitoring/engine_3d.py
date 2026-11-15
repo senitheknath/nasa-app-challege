@@ -10,121 +10,15 @@ from typing import Any
 from agroshift.earth_data.cache import get_cached
 from agroshift.earth_data.satellite import fetch_satellite_overpasses
 from agroshift.monitoring.processors import (
+    ProgressiveFusionAccumulator,
     compute_layer_update_frequencies,
+    downscale_moisture_to_parcel_grid,
+    fuse_progressive_steps,
+    fuse_soil_wetness_3way,
     process_soil_3d_profile,
     process_terrain_grid,
     process_terrain_stencil,
 )
-
-try:
-    from agroshift.monitoring.processors import (
-        ProgressiveFusionAccumulator,
-        downscale_moisture_to_parcel_grid,
-        fuse_progressive_steps,
-        fuse_soil_wetness_3way,
-    )
-except ImportError:
-    def _fuse_inverse_variance_fallback(measurements: list[tuple[float, float]]) -> dict[str, float]:
-        valid = [(float(v), float(s)) for v, s in measurements if s is not None and s > 0]
-        if not valid:
-            return {"fused_value": 0.0, "fused_sigma": 0.0, "min_input_sigma": 0.0, "variance_reduction_pct": 0.0}
-        weights = [1.0 / (s * s) for _, s in valid]
-        w_sum = sum(weights)
-        val = sum(w * v for w, (v, _) in zip(weights, valid)) / w_sum
-        sig = math.sqrt(1.0 / w_sum)
-        min_sig = min(s for _, s in valid)
-        var_red = (1.0 - (sig * sig) / (min_sig * min_sig)) * 100.0
-        return {
-            "fused_value": round(val, 2),
-            "fused_sigma": round(sig, 2),
-            "min_input_sigma": round(min_sig, 2),
-            "variance_reduction_pct": round(var_red, 1),
-        }
-
-    def fuse_progressive_steps(steps: list[tuple[str, float, float]]) -> dict[str, Any]:
-        acc_steps: list[dict[str, Any]] = []
-        precision_sum = 0.0
-        weighted_sum = 0.0
-        min_sig = float("inf")
-        sources: list[str] = []
-        for idx, (src, val, sig) in enumerate(steps, start=1):
-            w = 1.0 / (float(sig) * float(sig))
-            precision_sum += w
-            weighted_sum += w * float(val)
-            min_sig = min(min_sig, float(sig))
-            sources.append(str(src))
-            fused_val = weighted_sum / precision_sum
-            fused_var = 1.0 / precision_sum
-            fused_sig = math.sqrt(fused_var)
-            var_red = (1.0 - fused_var / (min_sig * min_sig)) * 100.0
-            acc_steps.append(
-                {
-                    "step": idx,
-                    "source": str(src),
-                    "input_value": round(float(val), 2),
-                    "input_sigma": round(float(sig), 2),
-                    "fused_value": round(fused_val, 2),
-                    "fused_sigma": round(fused_sig, 2),
-                    "variance_reduction_pct": round(var_red, 1),
-                }
-            )
-        last = acc_steps[-1]
-        return {
-            "fused_value": last["fused_value"],
-            "fused_sigma": last["fused_sigma"],
-            "min_input_sigma": round(min_sig, 2),
-            "variance_reduction_pct": last["variance_reduction_pct"],
-            "sensor_count": len(acc_steps),
-            "sources_used": sources,
-            "convergence_steps": acc_steps,
-        }
-
-    class ProgressiveFusionAccumulator:  # type: ignore[no-redef]
-        def __init__(self) -> None:
-            self._steps: list[tuple[str, float, float]] = []
-
-        def update(self, source_name: str, value: float, sigma: float) -> dict[str, Any]:
-            self._steps.append((source_name, float(value), float(sigma)))
-            return fuse_progressive_steps(self._steps)["convergence_steps"][-1]
-
-        def result(self) -> dict[str, Any]:
-            return fuse_progressive_steps(self._steps)
-
-    def fuse_soil_wetness_3way(
-        s1_sar_moisture_pct: float,
-        s2_ndmi_moisture_pct: float | None,
-        fao_smap_prior_pct: float,
-        *,
-        s1_sigma: float = 4.5,
-        s2_sigma: float = 5.0,
-        prior_sigma: float = 6.0,
-    ) -> dict[str, Any]:
-        steps: list[tuple[str, float, float]] = [
-            ("fao56_smap_prior", float(fao_smap_prior_pct), float(prior_sigma)),
-            ("sentinel1_sar", float(s1_sar_moisture_pct), float(s1_sigma)),
-        ]
-        if s2_ndmi_moisture_pct is not None:
-            steps.append(("sentinel2_ndmi", float(s2_ndmi_moisture_pct), float(s2_sigma)))
-        res = fuse_progressive_steps(steps)
-        return {**res, "fused_moisture_pct": res["fused_value"]}
-
-    def downscale_moisture_to_parcel_grid(
-        coarse_moisture_pct: float,
-        wetness_index_grid: list[float],
-        twi_grid: list[float],
-        *,
-        kappa_w: float = 4.2,
-        kappa_topo: float = 1.6,
-    ) -> list[float]:
-        n = len(wetness_index_grid)
-        if n == 0:
-            return []
-        mean_w = sum(wetness_index_grid) / n
-        mean_twi = sum(twi_grid) / n
-        return [
-            round(coarse_moisture_pct + kappa_w * (w - mean_w) + kappa_topo * (t - mean_twi), 2)
-            for w, t in zip(wetness_index_grid, twi_grid)
-        ]
 from agroshift.science.climate.climate import compute_daily_agromet_indices
 from agroshift.science.climate.power import coordinates
 from agroshift.science.soil_water.soil_and_water import (
