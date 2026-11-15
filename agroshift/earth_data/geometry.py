@@ -36,6 +36,10 @@ def normalize_boundary(boundary: Any) -> dict | None:
                 lon = float(pt.get("lng", pt.get("lon")))
                 lat = float(pt["lat"])
                 ring.append([lon, lat])
+            elif isinstance(pt, dict) and "latitude" in pt and "longitude" in pt:
+                lon = float(pt["longitude"])
+                lat = float(pt["latitude"])
+                ring.append([lon, lat])
             elif isinstance(pt, (list, tuple)) and len(pt) >= 2:
                 ring.append([float(pt[1]), float(pt[0])])
         if len(ring) >= 3:
