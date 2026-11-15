@@ -7,6 +7,6 @@ export function useStrategies(country: string) {
   return useQuery({
     queryKey: keys.strategies(country), enabled: !!country,
     queryFn: ({ signal }) => endpoints.strategies(country, signal),
-    select: (dto) => dto.filter((strategy) => strategy.id !== 'rotation').map(mapStrategy),
+    select: (dto) => dto.map(mapStrategy),
   });
 }

@@ -11,13 +11,13 @@ import { strings } from '@/i18n/strings';
 import { usePlanner } from '@/state/usePlanner';
 import { pictures } from '@/theme/images';
 import { colors, space } from '@/theme/tokens';
-import { calendarDate, lastYalaDate } from '@/utils/format';
+import { calendarDate } from '@/utils/format';
 import { tap } from '@/utils/haptics';
 import { useCountryData } from '../country/hooks';
 import { continueTo, FlowScreen, ScrollFrame } from '../planner/FlowScreen';
 import { useCategories, useCrops } from './hooks';
 
-const presets = [() => calendarDate(), () => calendarDate(new Date(), -30), () => lastYalaDate()];
+const presets = [() => calendarDate(), () => calendarDate(new Date(), 14), () => calendarDate(new Date(), 30)];
 
 export default function CropScreen() {
   const country = usePlanner((draft) => draft.countryId);

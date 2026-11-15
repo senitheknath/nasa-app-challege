@@ -1,30 +1,56 @@
 import { fieldSchema, isValidBoundary, mapMeasurement, polygonArea } from '@/features/area/model';
 import { countryDataSchema, mapCountryData } from '@/features/country/model';
 import { cropPageSchema, cropSchema, mapCrop } from '@/features/crop/model';
+import { mapMonitorResponse, monitorResponseSchema } from '@/features/monitor/model';
 import { mapPlan, planRequestSchema, planSchema } from '@/features/plan/model';
-import { buildMockPlan } from '@/mocks/agronomy';
-import { countries, crops } from '@/mocks/catalog';
 import { usePlanner } from '@/state/usePlanner';
-import { calendarDate, lastYalaDate, parseCalendarDate } from '@/utils/format';
+import { calendarDate, parseCalendarDate } from '@/utils/format';
+
+const countries = [
+  { id: 'LK', name: 'Sri Lanka', supported: true, latitude: 7.8731, longitude: 80.7718, zoom: 7 },
+  { id: 'KE', name: 'Kenya', supported: true, latitude: -0.0236, longitude: 37.9062, zoom: 6 },
+];
 
 const field = { countryId: 'LK', points: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }] };
 const bootstrapData = {
-  defaultCountryId: 'LK', currentSeason: 'Maha', cropCount: 10, seasonCount: 2, defaultStrategyId: 'standing', defaultCropId: 'rice', countries,
+  defaultCountryId: 'LK',
+  currentSeason: 'Continuous',
+  cropCount: 107,
+  seasonCount: 8,
+  defaultStrategyId: 'continuous_rainfed',
+  defaultCropId: 'rice',
+  countries,
 };
 
 test('validates supported country defaults and formats counts', () => {
   const view = mapCountryData(countryDataSchema.parse(bootstrapData));
   expect(view.defaultCountry?.name).toBe('Sri Lanka');
-  expect(view.crops).toBe('10');
+  expect(view.crops).toBe('107');
   expect(countryDataSchema.safeParse({ ...bootstrapData, defaultCountryId: 'IN' }).success).toBe(false);
   expect(mapCountryData(countryDataSchema.parse({ ...bootstrapData, countries: [] })).defaultCountry).toBeUndefined();
 });
 
-test('rejects malformed coordinates and maps valid field metrics', () => {
+test('rejects malformed coordinates and maps valid field metrics with autofill telemetry', () => {
   expect(polygonArea(fieldSchema.parse(field).points)).toBe(100);
   expect(fieldSchema.safeParse({ ...field, points: [{ x: 101, y: -1 }, ...field.points] }).success).toBe(false);
-  expect(mapMeasurement({ hectares: 5, acres: 12.355, perimeterKm: 3.14 })).toEqual({
-    hectares: '5.0', acres: '12.4', perimeter: '3.14', areaLabel: '5.0 ha',
+  expect(mapMeasurement({
+    hectares: 5,
+    acres: 12.355,
+    perimeterKm: 3.14,
+    ph: 6.2,
+    drainage: 'well_drained',
+    annualRainfallMm: 1450,
+    meanTemperatureC: 27.4,
+  })).toEqual({
+    hectares: '5.0',
+    acres: '12.4',
+    perimeter: '3.14',
+    areaLabel: '5.0 ha',
+    rawHectares: 5,
+    ph: '6.2',
+    drainage: 'well drained',
+    rainfall: '1,450 mm',
+    temperature: '27.4 °C',
   });
   expect(mapMeasurement(null)).toBeNull();
 });
@@ -37,46 +63,225 @@ test('rejects crossings and repeated corners while accepting a concave field', (
   expect(isValidBoundary([{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 4, y: 3 }, { x: 8, y: 8 }, { x: 0, y: 8 }])).toBe(true);
 });
 
-test('invalidates later steps only when a plan input changes', () => {
+test('usePlanner handles step invalidation, GeoPoint conversion, and loadSavedFarm', () => {
   const draft = usePlanner.getState();
   try {
-    draft.chooseCountry('LK');
-    draft.chooseStrategy('fallow');
+    draft.chooseCountry('LK', { latitude: 7.8731, longitude: 80.7718, zoom: 12 });
+    draft.addPoint({ x: 25, y: 25 });
+    expect(usePlanner.getState().boundary).toHaveLength(1);
+    expect(usePlanner.getState().boundary[0].latitude).toBeGreaterThan(7.8731);
+
+    draft.chooseStrategy('continuous_irrigated');
+    expect(usePlanner.getState().irrigation).toBe('irrigated');
     draft.unlock(5);
-    draft.chooseStrategy('fallow');
+    draft.chooseStrategy('continuous_irrigated');
     expect(usePlanner.getState().reached).toBe(5);
-    draft.chooseStrategy('standing');
+
+    draft.chooseStrategy('continuous_rainfed');
     expect(usePlanner.getState().reached).toBe(3);
+    expect(usePlanner.getState().irrigation).toBe('rainfed');
+
     draft.unlock(5);
     draft.chooseCrop('maize');
     expect(usePlanner.getState().reached).toBe(4);
     draft.unlock(5);
     draft.setDate('2026-11-05');
     expect(usePlanner.getState().reached).toBe(4);
+
+    draft.loadSavedFarm({
+      id: 42,
+      name: 'North Valley Parcel',
+      country: 'KE',
+      latitude: -0.0236,
+      longitude: 37.9062,
+      area_ha: 12.5,
+      boundary: [
+        { latitude: -0.02, longitude: 37.90 },
+        { latitude: -0.02, longitude: 37.91 },
+        { latitude: -0.03, longitude: 37.91 },
+        { latitude: -0.03, longitude: 37.90 },
+      ],
+      irrigation: 'irrigated',
+      crop_id: 'maize',
+      start_date: '2026-11-20',
+    });
+
+    const loaded = usePlanner.getState();
+    expect(loaded.farmId).toBe(42);
+    expect(loaded.farmName).toBe('North Valley Parcel');
+    expect(loaded.countryId).toBe('KE');
+    expect(loaded.closed).toBe(true);
+    expect(loaded.reached).toBe(6);
+    expect(loaded.points).toHaveLength(4);
+    expect(loaded.irrigation).toBe('irrigated');
   } finally {
     draft.reset();
   }
 });
 
 test('validates crop water bounds and cursor shape and maps units', () => {
-  const crop = cropSchema.parse(crops[0]);
-  expect(mapCrop(crop)).toMatchObject({ cropYield: '5.2 t/ha', waterLabel: '85%', category: 'Cereals' });
+  const crop = cropSchema.parse({
+    id: 'rice',
+    name: 'Paddy Rice',
+    category: { id: 'Cereals', label: 'Cereals' },
+    yieldTonnesPerHectare: 5.2,
+    waterPercent: 85,
+    family: 'Poaceae',
+    growthDays: '110-130d',
+  });
+  expect(mapCrop(crop)).toMatchObject({ cropYield: '5.2 t/ha', waterLabel: '85%', category: 'Cereals', family: 'Poaceae' });
   expect(cropSchema.safeParse({ ...crop, waterPercent: 101 }).success).toBe(false);
   expect(cropPageSchema.safeParse({ items: [crop], nextCursor: '' }).success).toBe(false);
 });
 
-test('maps a crop-free Fallow preview and an empty timeline', () => {
-  const draft = planRequestSchema.parse({ ...field, strategyId: 'fallow', sowingDate: '2026-11-15' });
-  const dto = planSchema.parse(buildMockPlan(draft));
-  expect(mapPlan(dto)).toMatchObject({ area: '5.0 ha', strategy: 'Fallow', first: { label: 'Maha 2026', crop: { name: 'Paddy Rice' } } });
-  expect(mapPlan(dto && { ...dto, timeline: [] })).toBeNull();
+test('maps continuous rotation slots with FAO-56 stages and turnaround telemetry', () => {
+  const draft = planRequestSchema.parse({
+    ...field,
+    strategyId: 'continuous_rainfed',
+    cropId: 'rice',
+    sowingDate: '2026-11-15',
+    irrigation: 'rainfed',
+  });
+  expect(draft.strategyId).toBe('continuous_rainfed');
+
+  const dto = planSchema.parse({
+    hectares: 5.0,
+    strategyTag: 'Rainfed',
+    mode: 'continuous',
+    crop: {
+      id: 'rice',
+      name: 'Paddy Rice',
+      category: { id: 'Poaceae', label: 'Poaceae' },
+      yieldTonnesPerHectare: 4.5,
+      waterPercent: 50,
+    },
+    timeline: [
+      {
+        id: 'rot-1-0',
+        season: 'Slot 1',
+        year: 2026,
+        crop: {
+          id: 'rice',
+          name: 'Paddy Rice',
+          category: { id: 'Poaceae', label: 'Poaceae' },
+          yieldTonnesPerHectare: 4.5,
+          waterPercent: 50,
+        },
+        note: '2026-11-15 → 2027-03-15',
+        sowingDate: '2026-11-15',
+        harvestDate: '2027-03-15',
+        stages: [
+          { stage: 'initial', start_date: '2026-11-15', end_date: '2026-12-10', duration_days: 25 },
+          { stage: 'development', start_date: '2026-12-10', end_date: '2027-01-14', duration_days: 35 },
+          { stage: 'mid', start_date: '2027-01-14', end_date: '2027-02-23', duration_days: 40 },
+          { stage: 'late', start_date: '2027-02-23', end_date: '2027-03-15', duration_days: 20 },
+        ],
+      },
+    ],
+    rotations: [
+      {
+        id: 'rice__mungbean',
+        name: 'Paddy Rice → Mungbean',
+        rank: 1,
+        score: 88,
+        rating: 'Optimal',
+        timeline: {
+          feasible: true,
+          total_agronomic_score: 88,
+          collision_probability_pct: 6,
+          turnaround_summary: { buffer_days: 14, status: 'optimal', advisory: 'Clean 14-day residue turnaround' },
+          slots: [
+            {
+              crop_id: 'rice',
+              crop_name: 'Paddy Rice',
+              family: 'Poaceae',
+              sowing_date: '2026-11-15',
+              harvest_nominal_date: '2027-03-15',
+              growth_cycle_days: { minimum: 110, nominal: 120, maximum: 135 },
+              stages: [
+                { stage: 'initial', start_date: '2026-11-15', end_date: '2026-12-10', duration_days: 25 },
+                { stage: 'development', start_date: '2026-12-10', end_date: '2027-01-14', duration_days: 35 },
+                { stage: 'mid', start_date: '2027-01-14', end_date: '2027-02-23', duration_days: 40 },
+                { stage: 'late', start_date: '2027-02-23', end_date: '2027-03-15', duration_days: 20 },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const mapped = mapPlan(dto);
+  expect(mapped).not.toBeNull();
+  expect(mapped?.area).toBe('5.0 ha');
+  expect(mapped?.rotations).toHaveLength(1);
+  expect(mapped?.rotations[0].slots[0].stages).toHaveLength(4);
+  expect(mapped?.rotations[0].slots[0].stages[0].label).toBe('Initial');
+  expect(mapPlan(dto && { ...dto, timeline: [], rotations: [] })).toBeNull();
   expect(planRequestSchema.safeParse({ ...draft, sowingDate: '2026-02-31' }).success).toBe(false);
 });
 
-test('selects the start of the most recently completed Yala season', () => {
-  expect(lastYalaDate(new Date(2026, 1, 1))).toBe('2025-04-01');
-  expect(lastYalaDate(new Date(2026, 8, 30))).toBe('2025-04-01');
-  expect(lastYalaDate(new Date(2026, 9, 1))).toBe('2026-04-01');
+test('parses and maps 3D field slab and live rotation monitor response', () => {
+  const dto = monitorResponseSchema.parse({
+    location: { country: 'LK', latitude: 7.8731, longitude: 80.7718, area_ha: 5.0 },
+    slab_3d: {
+      location: { country: 'LK', latitude: 7.8731, longitude: 80.7718, area_ha: 5.0 },
+      active_root_depth_m: 0.45,
+      atmosphere_layer: { temp_c: 28.5 },
+      canopy_layer: { ndvi_current: 0.64 },
+      terrain_3d_mesh: {
+        grid_size: 5,
+        span_km_x: 0.5,
+        span_km_y: 0.5,
+        area_km2: 0.25,
+        elevation_m: 142,
+        regional_slope_pct: 2.3,
+        boundary_uv: [{ u: 0.2, v: 0.2 }, { u: 0.8, v: 0.2 }, { u: 0.8, v: 0.8 }],
+        vertices: [{ row: 0, col: 0, elevation_m: 141 }],
+      },
+      soil_3d_horizons: [
+        { depth_label: '0-5cm', ph: 6.1, volumetric_moisture_pct: 28.4, roots_present: true },
+      ],
+      update_frequencies: { sentinel2: '5d' },
+      sensor_fusion: {
+        stack: ['SENTINEL2_L2A', 'COP_DEM_GLO30'],
+        combined_parcel_dt_days: 2.5,
+        parcel_mean_moisture_conserved_pct: 31.2,
+      },
+    },
+    live_rotation_monitor: {
+      t_now_day: 42,
+      observed_ndvi: 0.64,
+      weather_volatility: 0.18,
+      plain_rotations: [
+        {
+          id: 'rice__mungbean',
+          name: 'Paddy Rice → Mungbean',
+          live_state: {
+            t_now_day: 42,
+            current_date: '2026-12-27',
+            growth_lag_days: 2,
+            active_stage: 'development',
+            active_root_depth_m: 0.45,
+            expected_ndvi: 0.61,
+            observed_ndvi: 0.64,
+            sigma_at_harvest_days: 4.5,
+            uncertainty_cone_series: [
+              { day: 42, nominal_progress_pct: 35, optimistic_bound_pct: 40, pessimistic_bound_pct: 30 },
+            ],
+          },
+        },
+      ],
+      easiness_rotations: [],
+    },
+  });
+
+  const mapped = mapMonitorResponse(dto);
+  expect(mapped.elevationLabel).toBe('142 m');
+  expect(mapped.slopeLabel).toBe('2.3%');
+  expect(mapped.rootDepthLabel).toBe('0.45 m');
+  expect(mapped.ndviLabel).toBe('0.64');
+  expect(mapped.liveMonitor.plain_rotations[0].live_state.active_stage).toBe('development');
 });
 
 test('keeps date-only values in the user’s local calendar', () => {

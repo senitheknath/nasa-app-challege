@@ -15,9 +15,9 @@ import { useCountryData } from '../country/hooks';
 import { useStrategies } from '../strategy/hooks';
 import { getSelectedStrategy } from '../strategy/model';
 
-export const routes = ['/', '/area', '/strategy', '/crop', '/plan'] as const;
-export type Step = 1 | 2 | 3 | 4 | 5;
-const titles = ['', strings.areaTitle, strings.strategyTitle, strings.cropTitle, strings.planTitle];
+export const routes = ['/', '/area', '/strategy', '/crop', '/plan', '/monitor'] as const;
+export type Step = 1 | 2 | 3 | 4 | 5 | 6;
+const titles = ['', strings.areaTitle, strings.strategyTitle, strings.cropTitle, strings.planTitle, strings.monitorTitle];
 
 export function go(step: Step) {
   Keyboard.dismiss();
@@ -74,7 +74,7 @@ export function FlowScreen({ step, action, onNext, disabled, busy, children }: {
         {step > 1 && (
           <View pointerEvents="box-none" style={styles.header} onLayout={(event) => setHeader(event.nativeEvent.layout.height)}>
             <ScreenHeader title={titles[step - 1]} subtitle={strings.stepSubtitle(label, step, routes.length)}
-              top={top} onBack={back} onCountry={() => go(1)} />
+              top={top} onBack={back} onCountry={() => go(1)} onAccount={() => router.push('/login')} />
           </View>
         )}
         {!editing && (

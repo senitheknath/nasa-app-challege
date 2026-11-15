@@ -10,4 +10,9 @@ export const keys = {
   categories: (country: string) => ['categories', country] as const,
   crops: (country: string, search: string, category: string) => ['crops', country, search, category] as const,
   plan: (draft: PlanRequestDto | null) => ['plan', draft] as const,
+  monitor3d: (request: unknown) => ['monitor3d', request] as const,
+  satellite: (context: unknown) => ['satellite', context] as const,
+  climate: (context: unknown) => ['climate', context] as const,
+  authMe: () => ['auth', 'me'] as const,
+  farms: () => ['farms'] as const,
 };

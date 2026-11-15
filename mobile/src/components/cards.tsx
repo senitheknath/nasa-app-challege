@@ -90,17 +90,126 @@ export function CropCard({ selected, onPress, category, name, cropYield, water, 
   );
 }
 
-export function TimelineCard({ season, crop, summary, note, first }: {
-  season: string; crop: string; summary: string; note: string; first: boolean;
+export type TimelineStage = {
+  stage: string;
+  label: string;
+  durationDays: number;
+  startDate: string;
+  endDate: string;
+  percent?: number;
+};
+
+const STAGE_COLORS = [
+  colors.sage,
+  colors.forest700,
+  colors.accent,
+  colors.cream,
+] as const;
+
+export function TimelineCard({
+  season,
+  crop,
+  summary,
+  note,
+  first,
+  dateSpan,
+  harvestWindow,
+  family,
+  growthDays,
+  stages,
+  turnaround,
+  expiry,
+  collisionPct,
+}: {
+  season: string;
+  crop: string;
+  summary: string;
+  note: string;
+  first: boolean;
+  dateSpan?: string;
+  harvestWindow?: string;
+  family?: string;
+  growthDays?: string;
+  stages?: readonly TimelineStage[];
+  turnaround?: string;
+  expiry?: string;
+  collisionPct?: number;
 }) {
+  const hasRichDetails = Boolean(
+    dateSpan || harvestWindow || family || growthDays || stages?.length || turnaround || expiry || collisionPct != null,
+  );
+
+  if (!hasRichDetails) {
+    return (
+      <Surface rounding={radius.tile} style={styles.timeline}>
+        <View style={styles.selectionBody}>
+          <Label variant="label" tone="sage">{season}</Label>
+          <Label variant="action">{crop}</Label>
+          <Label variant="caption" tone="sage">{summary}</Label>
+        </View>
+        <View style={styles.timelineNote}><Chip label={note} accent={first} /></View>
+      </Surface>
+    );
+  }
+
+  const totalDays = stages?.reduce((sum, item) => sum + Math.max(0, item.durationDays), 0) ?? 0;
+
   return (
-    <Surface rounding={radius.tile} style={styles.timeline}>
-      <View style={styles.selectionBody}>
-        <Label variant="label" tone="sage">{season}</Label>
-        <Label variant="action">{crop}</Label>
-        <Label variant="caption" tone="sage">{summary}</Label>
+    <Surface kind={first ? 'selected' : 'card'} rounding={radius.tile} style={styles.richTimeline}>
+      <View style={styles.timelineHeader}>
+        <View style={styles.selectionBody}>
+          <Label variant="label" tone="sage">{family ? `${season} · ${family}` : season}</Label>
+          <Label variant="action" tone={first ? 'accent' : 'cream'}>{crop}</Label>
+          {!!dateSpan && <Label variant="caption" tone="cream">{dateSpan}</Label>}
+          <Label variant="caption" tone="sage">{growthDays ? `${summary} · ${growthDays}` : summary}</Label>
+          {!!harvestWindow && <Label variant="caption" tone="muted">Harvest: {harvestWindow}</Label>}
+        </View>
+        <View style={styles.timelineNote}><Chip label={note} accent={first} /></View>
       </View>
-      <View style={styles.timelineNote}><Chip label={note} accent={first} /></View>
+
+      {!!stages?.length && (
+        <View style={styles.stagesBlock}>
+          <View style={styles.stageBar}>
+            {stages.map((item, idx) => {
+              const flexWeight = item.percent ?? (totalDays > 0 ? Math.max(8, Math.round((item.durationDays / totalDays) * 100)) : 25);
+              return (
+                <View
+                  key={`${item.stage}-${idx}`}
+                  style={[
+                    styles.stageSegment,
+                    { flex: flexWeight, backgroundColor: STAGE_COLORS[idx % STAGE_COLORS.length] },
+                  ]}
+                />
+              );
+            })}
+          </View>
+          <View style={styles.stageLegend}>
+            {stages.map((item, idx) => (
+              <View key={`${item.stage}-legend-${idx}`} style={styles.stageItem}>
+                <View style={styles.stageTitleRow}>
+                  <View style={[styles.stageDot, { backgroundColor: STAGE_COLORS[idx % STAGE_COLORS.length] }]} />
+                  <Label variant="smallBold" tone="cream">{item.label} ({item.durationDays}d)</Label>
+                </View>
+                <Label variant="caption" tone="sage">{item.startDate} – {item.endDate}</Label>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {(!!turnaround || !!expiry || collisionPct != null) && (
+        <View style={styles.timelineChips}>
+          {!!turnaround && <Chip label={turnaround} />}
+          {!!expiry && <Chip label={expiry} />}
+          {collisionPct != null && (
+            <View style={[styles.riskBadge, collisionPct > 25 && styles.riskBadgeDanger]}>
+              <Label variant="smallBold" tone={collisionPct > 25 ? 'danger' : 'accent'}>
+                {collisionPct}% risk
+              </Label>
+            </View>
+          )}
+        </View>
+      )}
     </Surface>
   );
 }
@@ -139,6 +248,18 @@ const styles = StyleSheet.create({
   cropFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.sm, marginBottom: space.md },
   fact: { flexDirection: 'row', alignItems: 'center', gap: space.tight, flexShrink: 1 },
   timeline: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg },
+  richTimeline: { padding: space.lg, gap: space.md },
+  timelineHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   timelineNote: { maxWidth: '50%' },
+  stagesBlock: { gap: space.sm, paddingTop: space.xs },
+  stageBar: { flexDirection: 'row', height: size.dot, borderRadius: radius.pill, overflow: 'hidden', gap: space.xxs },
+  stageSegment: { height: '100%', borderRadius: radius.pill },
+  stageLegend: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  stageItem: { width: '48%', gap: space.xxs },
+  stageTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.tight },
+  stageDot: { width: size.dot, height: size.dot, borderRadius: radius.pill },
+  timelineChips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
+  riskBadge: { paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.highlight, borderWidth: size.hairline, borderColor: colors.accentBorder },
+  riskBadgeDanger: { backgroundColor: colors.dangerFill, borderColor: colors.dangerBorder },
   action: { padding: space.lg, gap: space.xs },
 });

@@ -1,36 +1,103 @@
 import { z } from 'zod';
 import { strings } from '@/i18n/strings';
-import type { Picture } from '@/theme/images';
+import { pictures, type Picture } from '@/theme/images';
 import { formatNumber, formatUnit } from '@/utils/format';
 
 export const pointSchema = z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) });
+export const geoPointSchema = z.object({ latitude: z.number(), longitude: z.number() });
 export const fieldSchema = z.object({
   countryId: z.string().min(1),
   points: z.array(pointSchema).min(3).refine(isValidBoundary, 'Boundary must have distinct corners and no crossing edges'),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  boundary: z.array(geoPointSchema).optional(),
 });
-export const mapSchema = z.object({ imageUrl: z.url({ protocol: /^https?$/ }) }).nullable();
-export const placeSchema = z.object({ id: z.string().min(1), name: z.string().min(1) });
+export const mapSchema = z.object({
+  imageUrl: z.string().optional(),
+  latitude: z.number().default(7.8731),
+  longitude: z.number().default(80.7718),
+  zoom: z.number().default(7),
+  countryName: z.string().optional(),
+  layerTitle: z.string().optional(),
+  regions: z.array(z.object({ id: z.string(), name: z.string(), latitude: z.number(), longitude: z.number() })).optional(),
+}).nullable();
+export const placeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  detail: z.string().optional(),
+});
 export const placesSchema = z.array(placeSchema);
 export const measurementSchema = z.object({
-  hectares: z.number().nonnegative(), acres: z.number().nonnegative(), perimeterKm: z.number().nonnegative(),
+  hectares: z.number().nonnegative(),
+  acres: z.number().nonnegative(),
+  perimeterKm: z.number().nonnegative(),
+  ph: z.number().nullable().optional(),
+  drainage: z.string().nullable().optional(),
+  annualRainfallMm: z.number().nullable().optional(),
+  meanTemperatureC: z.number().nullable().optional(),
+  wetness: z.string().nullable().optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
 }).nullable();
 
 export type Point = z.infer<typeof pointSchema>;
+export type GeoPoint = z.infer<typeof geoPointSchema>;
 export type FieldDto = z.infer<typeof fieldSchema>;
 export type MapDto = z.infer<typeof mapSchema>;
 export type PlaceDto = z.infer<typeof placeSchema>;
 export type MeasurementDto = z.infer<typeof measurementSchema>;
-export type FieldMap = { image: Picture };
-export type Place = { id: string; name: string };
-export type Measurement = { hectares: string; acres: string; perimeter: string; areaLabel: string };
+export type FieldMap = {
+  image: Picture;
+  latitude: number;
+  longitude: number;
+  zoom: number;
+  countryName?: string;
+  layerTitle?: string;
+  regions?: { id: string; name: string; latitude: number; longitude: number }[];
+};
+export type Place = { id: string; name: string; latitude?: number; longitude?: number; detail?: string };
+export type Measurement = {
+  hectares: string;
+  acres: string;
+  perimeter: string;
+  areaLabel: string;
+  rawHectares: number;
+  ph: string | null;
+  drainage: string | null;
+  rainfall: string | null;
+  temperature: string | null;
+};
 
-export const mapFieldMap = (dto: MapDto): FieldMap | null => dto ? { image: { uri: dto.imageUrl } } : null;
-export const mapPlace = (dto: PlaceDto): Place => ({ id: dto.id, name: dto.name });
+export const mapFieldMap = (dto: MapDto): FieldMap | null => dto ? {
+  image: dto.imageUrl ? { uri: dto.imageUrl } : pictures.aerial,
+  latitude: dto.latitude,
+  longitude: dto.longitude,
+  zoom: dto.zoom,
+  countryName: dto.countryName,
+  layerTitle: dto.layerTitle,
+  regions: dto.regions,
+} : null;
+export const mapPlace = (dto: PlaceDto): Place => ({
+  id: dto.id,
+  name: dto.name,
+  latitude: dto.latitude,
+  longitude: dto.longitude,
+  detail: dto.detail,
+});
 export function mapMeasurement(dto: MeasurementDto): Measurement | null {
   if (!dto) return null;
   return {
-    hectares: formatNumber(dto.hectares, 1), acres: formatNumber(dto.acres, 1), perimeter: formatNumber(dto.perimeterKm, 2),
+    hectares: formatNumber(dto.hectares, 1),
+    acres: formatNumber(dto.acres, 1),
+    perimeter: formatNumber(dto.perimeterKm, 2),
     areaLabel: formatUnit(dto.hectares, strings.units.hectares, 1),
+    rawHectares: dto.hectares,
+    ph: dto.ph != null ? formatNumber(dto.ph, 1) : null,
+    drainage: dto.drainage ? dto.drainage.replace(/_/g, ' ') : null,
+    rainfall: dto.annualRainfallMm != null ? formatNumber(dto.annualRainfallMm, 0) + ' mm' : null,
+    temperature: dto.meanTemperatureC != null ? formatNumber(dto.meanTemperatureC, 1) + ' °C' : null,
   };
 }
 

@@ -1,12 +1,19 @@
 import { z } from 'zod';
 import { formatNumber } from '@/utils/format';
 
-export const countrySchema = z.object({ id: z.string().min(1), name: z.string().min(1), supported: z.boolean() });
+export const countrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  supported: z.boolean(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  zoom: z.number().optional(),
+});
 export const countryDataSchema = z.object({
   defaultCountryId: z.string(),
   currentSeason: z.string(),
   cropCount: z.number().int().nonnegative(),
-  seasonCount: z.number().int().positive(),
+  seasonCount: z.number().int().nonnegative(),
   defaultStrategyId: z.string().min(1),
   defaultCropId: z.string().min(1),
   countries: z.array(countrySchema),
@@ -17,7 +24,7 @@ export const countryDataSchema = z.object({
 
 export type CountryDto = z.infer<typeof countrySchema>;
 export type CountryDataDto = z.infer<typeof countryDataSchema>;
-export type Country = { id: string; name: string; supported: boolean };
+export type Country = { id: string; name: string; supported: boolean; latitude?: number; longitude?: number; zoom?: number };
 export type CountryData = {
   defaultCountry: Country | undefined;
   season: string;
@@ -29,7 +36,9 @@ export type CountryData = {
 };
 
 export function mapCountryData(dto: CountryDataDto): CountryData {
-  const countries = dto.countries.map(({ id, name, supported }) => ({ id, name, supported }));
+  const countries = dto.countries.map(({ id, name, supported, latitude, longitude, zoom }) => ({
+    id, name, supported, latitude, longitude, zoom,
+  }));
   return {
     defaultCountry: countries.find((country) => country.id === dto.defaultCountryId),
     season: dto.currentSeason, crops: formatNumber(dto.cropCount), seasons: formatNumber(dto.seasonCount),

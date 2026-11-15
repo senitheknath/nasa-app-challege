@@ -8,8 +8,8 @@ import { useTheme } from '@/theme/useTheme';
 import { Icon } from './Icon';
 import { Label, Segmented, Surface, type Choice } from './primitives';
 
-export function PlanSheet({ subtitle, tabs, active, onTab, children, bottom = 0 }: {
-  subtitle?: string; tabs: readonly Choice[]; active: string; onTab: (id: string) => void; children: ReactNode; bottom?: number;
+export function PlanSheet({ subtitle, tabs, active, onTab, headerActions, children, bottom = 0 }: {
+  subtitle?: string; tabs: readonly Choice[]; active: string; onTab: (id: string) => void; headerActions?: ReactNode; children: ReactNode; bottom?: number;
 }) {
   const [height, setHeight] = useState(0);
   const { reducedMotion } = useTheme();
@@ -59,6 +59,7 @@ export function PlanSheet({ subtitle, tabs, active, onTab, children, bottom = 0 
           </View>
           <View style={styles.icon}><Icon name="redo" color={colors.forest950} /></View>
         </View>
+        {!!headerActions && <View style={styles.headerActions}>{headerActions}</View>}
         <View style={styles.segments}><Segmented items={tabs} value={active} onChange={onTab} /></View>
         {children}
       </Surface>
@@ -73,6 +74,7 @@ const styles = StyleSheet.create({
   handleTarget: { minHeight: size.touch, marginBottom: -space.lg, justifyContent: 'flex-start', alignItems: 'center', paddingTop: space.md, zIndex: 1 },
   handle: { width: size.sheetHandleWidth, height: size.indicator, backgroundColor: colors.handle, borderRadius: radius.pill },
   heading: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.gutter },
+  headerActions: { marginTop: space.sm, paddingHorizontal: space.gutter },
   icon: { width: size.touch, height: size.touch, borderRadius: radius.pill, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   segments: { marginTop: space.md, paddingHorizontal: space.gutter },
 });
