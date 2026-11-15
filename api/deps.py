@@ -54,15 +54,43 @@ def json_response(data: Any, status_code: int = 200) -> JSONResponse:
     return JSONResponse(clean_json(data), status_code=status_code)
 
 
+def _align_dataset_coords(ds: Any, latitude: float, longitude: float) -> Any:
+    if ds is None or not hasattr(ds, "frame"):
+        return ds
+    lat_f, lon_f = float(latitude), float(longitude)
+    if (ds.frame.attrs.get("latitude"), ds.frame.attrs.get("longitude")) == (lat_f, lon_f):
+        return ds
+    from agroshift.science.climate.power import Dataset
+
+    frame_copy = ds.frame.copy()
+    frame_copy.attrs = dict(ds.frame.attrs)
+    frame_copy.attrs["latitude"] = lat_f
+    frame_copy.attrs["longitude"] = lon_f
+    return Dataset(frame=frame_copy, provenance=ds.provenance, issues=ds.issues)
+
+
 def get_dataset(latitude: float, longitude: float, refresh: bool = False):
-    key = (round(float(latitude), 4), round(float(longitude), 4))
+    lat_f, lon_f = float(latitude), float(longitude)
+    key = (round(lat_f, 4), round(lon_f, 4))
     if not refresh:
         with _DATASET_LOCK:
             ds = _DATASET_CACHE.get(key)
             if ds is not None:
                 _DATASET_CACHE.move_to_end(key)
-                return ds
-    ds = load_history(float(latitude), float(longitude), refresh=refresh)
+                return _align_dataset_coords(ds, lat_f, lon_f)
+    try:
+        ds = load_history(lat_f, lon_f, refresh=refresh)
+    except Exception:
+        if refresh:
+            raise
+        from agroshift.presets import STATIONS
+
+        nearest = min(
+            STATIONS,
+            key=lambda s: (float(s["latitude"]) - lat_f) ** 2 + (float(s["longitude"]) - lon_f) ** 2,
+        )
+        ds = load_history(float(nearest["latitude"]), float(nearest["longitude"]), refresh=False)
+    ds = _align_dataset_coords(ds, lat_f, lon_f)
     with _DATASET_LOCK:
         _DATASET_CACHE[key] = ds
         _DATASET_CACHE.move_to_end(key)

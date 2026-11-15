@@ -390,16 +390,50 @@ def plan_global_rotations(
         if t.get("review_status") == "reviewed" and t.get("scope") == "global":
             traits_by_crop[t["crop_id"]][t["trait"]] = t
 
+    pinned_c1 = (
+        candidate_crop_ids[0]
+        if candidate_crop_ids is not None and len(candidate_crop_ids) == 1
+        else (
+            farm.current
+            if getattr(farm, "current", "unknown") not in (None, "unknown") and candidate_crop_ids is None
+            else None
+        )
+    )
+
     pool = select_candidate_pool(
         cards_s1,
         cards_s2,
-        candidate_crop_ids=candidate_crop_ids,
+        candidate_crop_ids=candidate_crop_ids if (candidate_crop_ids and len(candidate_crop_ids) > 1) else None,
         limit=config.max_candidate_pool,
     )
 
-    prev_crop = crop_by_id(farm.current) if farm.current not in (None, "unknown") else None
+    prev_crop = (
+        crop_by_id(farm.current)
+        if getattr(farm, "current", "unknown") not in (None, "unknown") and pinned_c1 != farm.current
+        else None
+    )
     prev_profile = CropProfile.from_crop_and_traits(prev_crop) if prev_crop else None
 
+    if pinned_c1 and pinned_c1 in cards_s1:
+        c1_pool = [pinned_c1]
+        s2_rank = {"possible": 0, "check": 1, "outside": 2, "unknown": 3, "blocked": 4}
+        s2_viable = [
+            cid
+            for cid, card in cards_s2.items()
+            if cid != pinned_c1 and card.get("status") in {"possible", "check"}
+        ]
+        s2_viable.sort(
+            key=lambda cid: (s2_rank.get(cards_s2[cid].get("status"), 9), cid)
+        )
+        if s2_viable:
+            c2_pool = s2_viable[: config.max_candidate_pool]
+        else:
+            c2_pool = [cid for cid in pool if cid != pinned_c1] or pool
+    else:
+        c1_pool = pool
+        c2_pool = pool
+
+    profile_ids = list(dict.fromkeys(c1_pool + c2_pool))
     profiles = {
         cid: CropProfile.from_crop_and_traits(
             crop_by_id(cid) or {"id": cid, "name": cards_s1[cid]["name"]},
@@ -407,12 +441,12 @@ def plan_global_rotations(
             growth_stages=growth_stages(cid),
             pest_records=pest_context(cid),
         )
-        for cid in pool
+        for cid in profile_ids
     }
 
     sequences: list[dict[str, Any]] = []
-    for c1_id in pool:
-        for c2_id in pool:
+    for c1_id in c1_pool:
+        for c2_id in c2_pool:
             p1 = profiles[c1_id]
             p2 = profiles[c2_id]
             s1_card = cards_s1[c1_id]

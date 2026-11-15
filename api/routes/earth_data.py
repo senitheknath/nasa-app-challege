@@ -219,17 +219,20 @@ async def monitor_3d(request: Request) -> Response:
             drainage_val = (af.get("drainage") or {}).get("value") or "well_drained"
 
             if ds is not None:
-                farm = Farm(
-                    country=country,
-                    latitude=latitude,
-                    longitude=longitude,
-                    area_ha=resolved_area,
-                    windows=windows,
-                    ph=ph_val,
-                    drainage=drainage_val,
-                    irrigation=str(payload.get("irrigation") or "rainfed"),
-                )
-                plans = plan_global_rotations(farm, ds, max_sequences=max_sequences)
+                try:
+                    farm = Farm(
+                        country=country,
+                        latitude=latitude,
+                        longitude=longitude,
+                        area_ha=resolved_area,
+                        windows=windows,
+                        ph=ph_val,
+                        drainage=drainage_val,
+                        irrigation=str(payload.get("irrigation") or "rainfed"),
+                    )
+                    plans = plan_global_rotations(farm, ds, max_sequences=max_sequences)
+                except (DataError, ValueError):
+                    plans = []
             else:
                 plans = []
 
