@@ -1,7 +1,8 @@
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -79,6 +80,18 @@ export default function CrescoScreen() {
   const [messagesByFarm, setMessagesByFarm] = useState<Record<string, CrescoChatMessage[]>>({});
   const [chatErrorState, setChatErrorState] = useState<{ scope: string; text: string } | null>(null);
   const [justConnected, setJustConnected] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardOpen(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardOpen(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const connected = statusQuery.data?.connected ?? false;
   const activeModel = statusQuery.data?.model ?? CRESCO_DEFAULT_MODEL;
@@ -169,24 +182,28 @@ export default function CrescoScreen() {
     else router.replace('/');
   };
 
+  const hideTopChrome = connected && keyboardOpen;
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safe} edges={keyboardOpen ? ['top'] : ['top', 'bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'web' ? undefined : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 8}
+        keyboardVerticalOffset={0}
         style={styles.flex}
       >
         <View style={styles.frame}>
-          <View style={styles.header}>
-            <IconButton name="back" label="Back" onPress={handleBack} />
-            <View style={styles.headerTitle}>
-              <Label variant="title" accessibilityRole="header">Cresco AI</Label>
-              <Label variant="caption" tone="sage" numberOfLines={1}>
-                {farmLabel}
-              </Label>
+          {!hideTopChrome && (
+            <View style={styles.header}>
+              <IconButton name="back" label="Back" onPress={handleBack} />
+              <View style={styles.headerTitle}>
+                <Label variant="title" accessibilityRole="header">Cresco AI</Label>
+                <Label variant="caption" tone="sage" numberOfLines={1}>
+                  {farmLabel}
+                </Label>
+              </View>
+              <IconButton name="user" label="Account and farms" onPress={() => router.push('/login')} />
             </View>
-            <IconButton name="user" label="Account and farms" onPress={() => router.push('/login')} />
-          </View>
+          )}
 
           {statusQuery.isLoading && !statusQuery.data ? (
             <View style={styles.centerState}>

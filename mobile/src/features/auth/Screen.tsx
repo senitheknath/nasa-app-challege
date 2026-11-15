@@ -281,8 +281,8 @@ export default function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView behavior={Platform.OS === 'web' ? undefined : 'padding'} style={styles.flex}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
           <View style={styles.container}>
             <View style={styles.header}>
               <IconButton name="back" label={strings.back} onPress={goBack} />

@@ -80,7 +80,7 @@ export function FlowScreen({ step, action, onNext, disabled, busy, standaloneTit
   const headerSubtitle = standaloneActive ? `${label} · 3D Live Monitor` : strings.stepSubtitle(label, step, routes.length);
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.viewport}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'web' ? undefined : 'padding'} style={styles.viewport}>
       <View style={styles.frame}>
         <Animated.View entering={reducedMotion ? undefined : FadeInDown.duration(motion.enter).withInitialValues({ transform: [{ translateY: motion.rise }] })}
           style={styles.viewport}>
