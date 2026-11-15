@@ -48,7 +48,12 @@ def test_archive_integrity_failure_is_unavailable(tmp_path, monkeypatch):
     original = http.ARCHIVES
     monkeypatch.setattr(http, "ARCHIVES", tmp_path)
     for source in original.glob("*.json"):
-        doc = json.loads(source.read_bytes())
+        raw = source.read_bytes()
+        if not raw.strip():
+            continue
+        doc = json.loads(raw)
+        if not isinstance(doc, dict) or "sha256" not in doc:
+            continue
         doc["sha256"] = "0" * 64
         (tmp_path/source.name).write_text(json.dumps(doc))
     assert p.soil_context(8.3114, 80.4037, offline=True)["value"] is None

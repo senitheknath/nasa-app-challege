@@ -129,24 +129,16 @@ Global place name search and country map bounding view.
 > **Shared `farm` object:** All `/api/agronomy/*` endpoints accept either an inline `farm` object (anonymous) OR `"farm_id": <int>` (when `Authorization: Bearer <token>` is provided).
 
 ### `POST /api/agronomy/rotations`
-Generates ranked multi-season crop rotation plans (`0–100` score + rating tier) with exact physical DAG timelines, 4 FAO-56 phenological growth stages, turnaround buffers, and delay slack.
+Generates ranked brute-force crop rotation pairs (`0–100` score + rating tier) with continuous timelines, 4 FAO-56 phenological growth stages, turnaround buffers, and delay slack. Supports season-free `"start_date"` (continuous 14-day handover chaining), single-window `duration_days`, or optional bounded `windows`.
 
-**Request:**
+**Request (season-free `start_date` or optional `windows`):**
 ```json
 {
-  "farm": {
-    "country": "LK",
-    "latitude": 8.3114,
-    "longitude": 80.4037,
-    "ph": 5.8,
-    "drainage": "well_drained",
-    "irrigation": "rainfed",
-    "previous": "unknown",
-    "windows": [
-      { "start_month": 10, "start_day": 1, "end_month": 1, "end_day": 20 },
-      { "start_month": 3, "start_day": 1, "end_month": 6, "end_day": 30 }
-    ]
-  },
+  "country": "LK",
+  "latitude": 8.3114,
+  "longitude": 80.4037,
+  "start_date": "2026-04-01",
+  "irrigation": "rainfed",
   "max_sequences": 16
 }
 ```
@@ -155,6 +147,7 @@ Generates ranked multi-season crop rotation plans (`0–100` score + rating tier
 ```json
 {
   "status": "success",
+  "mode": "continuous",
   "total": 16,
   "rotations": [
     {
