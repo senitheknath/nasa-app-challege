@@ -95,7 +95,11 @@ export function ChlorophyllTerrainMap({
   };
 
   const isFlatPose = viewMode === 'flat' && camera.tilt >= 80;
-  const activeNdvi = liveState?.observed_ndvi ?? liveState?.expected_ndvi ?? slab.canopy_layer.ndvi_current;
+  const activeNdvi =
+    liveState?.observed_ndvi ??
+    (slab.canopy_layer.is_bare_soil
+      ? slab.canopy_layer.ndvi_current
+      : (liveState?.expected_ndvi ?? slab.canopy_layer.ndvi_current));
   const baseNdviNorm = clamp((slab.canopy_layer.ndvi_current - 0.12) / 0.76, 0, 1);
   const activeNdviNorm = clamp((activeNdvi - 0.12) / 0.76, 0, 1);
   const ndviShiftCab = (56 * activeNdviNorm ** 1.15) - (56 * baseNdviNorm ** 1.15);
