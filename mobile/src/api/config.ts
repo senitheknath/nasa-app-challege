@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 export const useMocks = false;
 
-export const defaultBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:8000').replace(/\/+$/, '');
+export const defaultBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'https://agro.332536.xyz').replace(/\/+$/, '');
 export let baseUrl = defaultBaseUrl;
 
 const SERVER_KEY = 'cresco.server-url';
@@ -14,7 +14,10 @@ export function normalizeServerAddress(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, '');
   if (!trimmed) return '';
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `http://${trimmed}`;
+  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/|$)/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  return `https://${trimmed}`;
 }
 
 function readStoredWeb(): string | null {
