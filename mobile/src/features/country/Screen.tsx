@@ -74,7 +74,7 @@ export default function CountryScreen() {
   };
 
   return (
-    <FlowScreen step={1} action={defaultCountry ? strings.begin(defaultCountry.name) : strings.next}
+    <FlowScreen step={1} action=""
       disabled={state !== 'ready'} onNext={() => { if (defaultCountry) select(defaultCountry); }}>
       {(inset) => <>
         <Backdrop image={pictures.hero} kind="country" />

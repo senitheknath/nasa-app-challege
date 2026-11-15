@@ -257,7 +257,8 @@ export default function AuthScreen() {
 
   const handleLoadFarm = (farm: SavedFarm) => {
     planner.loadSavedFarm(farm);
-    router.replace(farm.crop_id ? '/plan' : '/area');
+    const cropId = farm.crop_id ?? (farm.farm?.crop_id as string | null | undefined);
+    router.replace(cropId ? '/plan' : '/area');
   };
 
   const farms = farmsQuery.data?.farms ?? [];

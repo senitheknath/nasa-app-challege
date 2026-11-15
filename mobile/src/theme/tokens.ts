@@ -60,7 +60,7 @@ export const size = {
   skeletonLine: 64, skeletonMap: 160, sheetHandleWidth: 44,
 } as const;
 export const icons = { grid: 24, small: 16, regular: 20, badge: 12, stroke: 1.5 } as const;
-export const motion = { enter: 450, progress: 700, shimmer: 600, search: 250, pressScale: .96, disabledOpacity: .45, rise: 14 } as const;
+export const motion = { enter: 450, progress: 700, shimmer: 600, search: 150, pressScale: .96, disabledOpacity: .45, rise: 14 } as const;
 export const glass = {
   blur: 18, strongBlur: 22, saturation: 130,
   shadow: { shadowColor: colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: .28, shadowRadius: 16 },

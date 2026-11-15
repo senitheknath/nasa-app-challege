@@ -62,10 +62,11 @@ export function ScreenFooter({ label, current, reached, skipped, disabled, busy,
 }) {
   const { reducedMotion } = useTheme();
   const [footerRef, onFooterLayout] = useAvoidanceZone('screen-footer', true, 'chrome', 12);
+  const showAction = !monitorActive && !!label;
   return (
-    <View ref={footerRef} onLayout={onFooterLayout} style={[styles.footer, { paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
+    <View ref={footerRef} onLayout={onFooterLayout} style={[styles.footer, { paddingTop: showAction ? space.fade : space.md, paddingBottom: bottom + space.gutter }]} pointerEvents="box-none">
       <LinearGradient pointerEvents="none" colors={[colors.transparent, colors.middleScrim, colors.bottomScrim]} style={StyleSheet.absoluteFill} />
-      {!monitorActive && <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />}
+      {showAction && <PrimaryButton label={label} onPress={onNext} disabled={disabled} busy={busy} />}
       <View style={styles.footerBar}>
         <View style={styles.stepWrap}>
           <StepBar current={monitorActive ? 0 : current} reached={reached} skipped={skipped} onStep={onStep} />
