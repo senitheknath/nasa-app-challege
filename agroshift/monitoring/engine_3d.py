@@ -1,11 +1,18 @@
 """3D Field Slab assembly combining Atmosphere, Canopy, 5x5 Terrain Mesh, and 4-Horizon Soil Profile."""
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+import io
 import math
+import threading
 from typing import Any
+
+from PIL import Image
+from agroshift.earth_data.provider_http import _session as _http_session
 
 from agroshift.earth_data.cache import get_cached
 from agroshift.earth_data.satellite import fetch_satellite_overpasses
@@ -79,23 +86,116 @@ def _build_atmosphere_layer(latitude: float, dataset: Any) -> dict[str, Any]:
     }
 
 
+_MODIS_TILE_CACHE: OrderedDict[tuple[str, int, int, int], bytes] = OrderedDict()
+_MODIS_TILE_LOCK = threading.Lock()
+
+
+def _decode_modis_rgb_to_ndvi(r: int, g: int, b: int, a: int) -> float | None:
+    """Convert NASA GIBS MODIS_Terra_NDVI_8Day RGBA palette pixel into approximate NDVI [0.08..0.85]."""
+    if a < 128:
+        return None
+    # Blue-dominant ocean/inland water mask
+    if b > r + 20 and b > g + 20:
+        return None
+    # Pure white cloud/snow/no-data mask
+    if r >= 245 and g >= 245 and b >= 245:
+        return None
+    # Brown/tan/gray barren land, desert sand, bare rock (R >= G)
+    if g <= r:
+        # Slight differentiation between dark bare soil and bright sand
+        return 0.10 if (r - g) >= 8 else 0.14
+    # Vegetated green palette (G > R): stronger green excess & deeper green -> higher NDVI
+    excess = max(0.0, min(1.0, (g - max(r, b)) / 120.0))
+    depth = max(0.0, min(1.0, 1.0 - (g / 255.0)))
+    ndvi = 0.22 + 0.42 * excess + 0.20 * depth
+    return round(max(0.18, min(0.85, ndvi)), 3)
+
+
+def fetch_modis_gibs_ndvi(
+    latitude: float,
+    longitude: float,
+    *,
+    offline: bool = False,
+    zoom: int = 8,
+) -> float | None:
+    """Sample real NASA GIBS MODIS_Terra_NDVI_8Day 8-day composite pixel at (latitude, longitude)."""
+    if offline:
+        return None
+    try:
+        lat = max(-85.0, min(85.0, float(latitude)))
+        lon = max(-180.0, min(180.0, float(longitude)))
+        n = 2 ** zoom
+        x_f = ((lon + 180.0) / 360.0) * n
+        lat_r = math.radians(lat)
+        y_f = ((1.0 - math.asinh(math.tan(lat_r)) / math.pi) / 2.0) * n
+        tx = max(0, min(n - 1, int(x_f)))
+        ty = max(0, min(n - 1, int(y_f)))
+        px = max(0, min(255, int((x_f - tx) * 256)))
+        py = max(0, min(255, int((y_f - ty) * 256)))
+
+        # Try 10 days ago (latest complete 8-day composite) then 18 days ago if unavailable
+        for lag_days in (10, 18):
+            obs_date = (datetime.now(timezone.utc) - timedelta(days=lag_days)).strftime("%Y-%m-%d")
+            cache_key = (obs_date, zoom, tx, ty)
+            raw_bytes: bytes | None = None
+            with _MODIS_TILE_LOCK:
+                raw_bytes = _MODIS_TILE_CACHE.get(cache_key)
+                if raw_bytes is not None:
+                    _MODIS_TILE_CACHE.move_to_end(cache_key)
+            if raw_bytes is None:
+                url = (
+                    f"https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+                    f"MODIS_Terra_NDVI_8Day/default/{obs_date}/GoogleMapsCompatible_Level9/{zoom}/{ty}/{tx}.png"
+                )
+                resp = _http_session.get(url, timeout=(2.5, 4.5))
+                if resp.status_code != 200 or not resp.content:
+                    resp.close()
+                    continue
+                raw_bytes = resp.content
+                resp.close()
+                with _MODIS_TILE_LOCK:
+                    _MODIS_TILE_CACHE[cache_key] = raw_bytes
+                    _MODIS_TILE_CACHE.move_to_end(cache_key)
+                    while len(_MODIS_TILE_CACHE) > 128:
+                        _MODIS_TILE_CACHE.popitem(last=False)
+
+            img = Image.open(io.BytesIO(raw_bytes)).convert("RGBA")
+            r, g, b, a = img.getpixel((px, py))
+            decoded = _decode_modis_rgb_to_ndvi(r, g, b, a)
+            if decoded is not None:
+                return decoded
+    except Exception:
+        return None
+    return None
+
+
 def estimate_climate_prior_ndvi(
     latitude: float,
     dataset: Any,
     base_ndvi: float = 0.58,
     irrigation: str = "rainfed",
+    elevation_m: float | None = None,
+    slope_pct: float | None = None,
 ) -> float:
-    """Cap unobserved prior NDVI in hyper-arid/desert climates so bare sand does not appear green."""
+    """Cap unobserved prior NDVI in hyper-arid, alpine, or steep rocky climates."""
     if str(irrigation or "").strip().lower() == "irrigated":
         return float(base_ndvi)
     atmo = _build_atmosphere_layer(latitude, dataset)
     et0 = max(0.5, float(atmo.get("et0_mm_day") or 4.0))
-    mean_rain = float(atmo.get("rainfall_mm_day") or 0.0)
+    recent_rain = float(atmo.get("rainfall_mm_day") or 0.0)
+    temp_c = float(atmo.get("temperature_c") or 22.0)
+    mean_rain = recent_rain
     if dataset is not None and hasattr(dataset, "frame") and not dataset.frame.empty and "PRECTOTCORR" in dataset.frame:
         mean_rain = float(dataset.frame["PRECTOTCORR"].mean())
     aridity = mean_rain / et0
     if mean_rain < 0.25 or aridity < 0.08:
         return min(float(base_ndvi), 0.12)
+    if (
+        (elevation_m is not None and float(elevation_m) >= 2200.0 and slope_pct is not None and float(slope_pct) >= 25.0)
+        or temp_c < 6.0
+        or (mean_rain < 1.6 and recent_rain < 0.3)
+    ):
+        return min(float(base_ndvi), 0.16)
     if mean_rain < 0.65 or aridity < 0.18:
         return min(float(base_ndvi), 0.28)
     return float(base_ndvi)
@@ -667,11 +767,24 @@ def build_3d_field_slab(
     norm_boundary = normalize_boundary(boundary)
     geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
     atmosphere_layer = _build_atmosphere_layer(lat, dataset)
-    resolved_ndvi = (
-        float(ndvi_current)
-        if ndvi_is_observed
-        else estimate_climate_prior_ndvi(lat, dataset, base_ndvi=float(ndvi_current), irrigation=irrigation)
-    )
+    effective_ndvi_observed = bool(ndvi_is_observed)
+    if effective_ndvi_observed:
+        resolved_ndvi = float(ndvi_current)
+    else:
+        modis_ndvi = fetch_modis_gibs_ndvi(lat, lon, offline=offline)
+        if modis_ndvi is not None:
+            resolved_ndvi = modis_ndvi
+            effective_ndvi_observed = True
+        else:
+            hints = _extract_autofill_hints(precomputed_autofill)
+            resolved_ndvi = estimate_climate_prior_ndvi(
+                lat,
+                dataset,
+                base_ndvi=float(ndvi_current),
+                irrigation=irrigation,
+                elevation_m=hints.get("elevation_m"),
+                slope_pct=hints.get("regional_slope_pct"),
+            )
 
     if stage == "fast":
         overpasses, had_cached_overpasses = _get_cached_overpasses_or_offline(
@@ -719,7 +832,7 @@ def build_3d_field_slab(
             terrain_3d_mesh=terrain_3d_mesh,
             soil_3d_horizons=soil_3d_horizons,
             fusion_stage=fusion_stage,
-            ndvi_is_observed=ndvi_is_observed,
+            ndvi_is_observed=effective_ndvi_observed,
         )
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -772,7 +885,7 @@ def build_3d_field_slab(
         terrain_3d_mesh=terrain_3d_mesh,
         soil_3d_horizons=soil_3d_horizons,
         fusion_stage="stage_2_full_fusion",
-        ndvi_is_observed=ndvi_is_observed,
+        ndvi_is_observed=effective_ndvi_observed,
     )
 
 
@@ -799,11 +912,24 @@ def iter_progressive_3d_field_slab(
     norm_boundary = normalize_boundary(boundary)
     geom = resolve_geometry("terrain_dem", lat, lon, boundary=norm_boundary, area_ha=area_ha or 4.0)
     atmosphere_layer = _build_atmosphere_layer(lat, dataset)
-    resolved_ndvi = (
-        float(ndvi_current)
-        if ndvi_is_observed
-        else estimate_climate_prior_ndvi(lat, dataset, base_ndvi=float(ndvi_current), irrigation=irrigation)
-    )
+    effective_ndvi_observed = bool(ndvi_is_observed)
+    if effective_ndvi_observed:
+        resolved_ndvi = float(ndvi_current)
+    else:
+        modis_ndvi = fetch_modis_gibs_ndvi(lat, lon, offline=offline)
+        if modis_ndvi is not None:
+            resolved_ndvi = modis_ndvi
+            effective_ndvi_observed = True
+        else:
+            hints = _extract_autofill_hints(precomputed_autofill)
+            resolved_ndvi = estimate_climate_prior_ndvi(
+                lat,
+                dataset,
+                base_ndvi=float(ndvi_current),
+                irrigation=irrigation,
+                elevation_m=hints.get("elevation_m"),
+                slope_pct=hints.get("regional_slope_pct"),
+            )
 
     # Stage 0: Immediate climate/soil priors + synthesized 5x5 relief + 1-sensor prior (sigma = 6.0%)
     stage0_overpasses, _ = _get_cached_overpasses_or_offline(
@@ -846,7 +972,7 @@ def iter_progressive_3d_field_slab(
         terrain_3d_mesh=stage0_terrain,
         soil_3d_horizons=stage0_soil,
         fusion_stage="stage_0_prior",
-        ndvi_is_observed=ndvi_is_observed,
+        ndvi_is_observed=effective_ndvi_observed,
     )
 
     pool = ThreadPoolExecutor(max_workers=3)
@@ -901,7 +1027,7 @@ def iter_progressive_3d_field_slab(
             terrain_3d_mesh=stage1_terrain,
             soil_3d_horizons=stage1_soil,
             fusion_stage="stage_1_sar_terrain",
-            ndvi_is_observed=ndvi_is_observed,
+            ndvi_is_observed=effective_ndvi_observed,
         )
 
         # Stage 2: Full 3-way sensor fusion (sigma = 2.92%), 4-horizon SoilGrids WCS, and STAC/CMR overpasses
@@ -929,7 +1055,7 @@ def iter_progressive_3d_field_slab(
             terrain_3d_mesh=stage1_terrain,
             soil_3d_horizons=full_soil,
             fusion_stage="stage_2_full_fusion",
-            ndvi_is_observed=ndvi_is_observed,
+            ndvi_is_observed=effective_ndvi_observed,
         )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
