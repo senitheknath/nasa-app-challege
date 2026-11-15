@@ -79,7 +79,10 @@ def _enrich_crop_item(item: dict, traits: dict, card: dict | None = None) -> dic
     cycle_max = int(cyc["high"]) if cyc and cyc.get("high") is not None else None
 
     out = dict(item)
-    out["family"] = item.get("family")
+    if item.get("family"):
+        out["family"] = item["family"]
+    else:
+        out.pop("family", None)
     out["yield_tonnes_per_ha"] = _FAO_REFERENCE_YIELD_THA.get(cid, 4.2)
     out["water_percent"] = water_pct
     if cycle_min is not None and cycle_max is not None:

@@ -4,7 +4,7 @@ Find crops to investigate using your field location, known conditions and growin
 
 ## Run
 
-On the configured laptop, double-click **START_AGROSHIFT.cmd** and open [AgroShift](http://localhost:8501). Choose **Analyze my farm** or **Try an example farm**. The example uses genuine archived NASA weather and explicitly fictional field inputs.
+Run the app locally and open [AgroShift](http://localhost:8501), then choose **Analyze my farm** or **Try an example farm** (which uses genuine archived NASA weather and explicitly fictional field inputs).
 
 Fresh setup with Python 3.14:
 
@@ -15,8 +15,6 @@ Fresh setup with Python 3.14:
     python -m scripts.run_local
 
 Docker Desktop is needed for the PostgreSQL command. Linux/macOS activation: source .venv/bin/activate. Without Docker or PostgreSQL, use python -m streamlit run app.py --server.address=127.0.0.1; the bundled SQLite reference database starts automatically.
-
-The laptop's Python environment is /home/asus/.venvs/agroshift-prep in WSL Ubuntu-26.04. Source is /mnt/c/Users/ASUS/OneDrive/Desktop/nasa. Both launch scripts use the current checkout.
 
 ## Farmer workflow
 

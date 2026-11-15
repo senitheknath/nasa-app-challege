@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 from agroshift.science.climate.power import (
-    DataError,
     PowerClient,
     PARAMETERS,
     archived_history,

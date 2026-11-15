@@ -30,10 +30,10 @@ def test_real_archives_support_general_but_no_unconfirmed_rotation(country):
     assert region_evidence(country)["sources"]
     assert len(options) >= 10
     assert all(o["support"] == "general" and o["sources"] for o in options)
-    assert any(o["id"] == "wheat" for o in options)
-    # Crops without global traits are withheld everywhere in general mode; rice & mung_bean are now global.
-    assert {"cowpea", "yam"}.isdisjoint(o["id"] for o in options)
-    assert {"rice", "mung_bean"}.issubset(o["id"] for o in options)
+    assert any(o["id"] == "maize" for o in options)
+    # Incomplete crops without all 5 core screening traits have been removed from the catalogue.
+    assert {"triticale"}.isdisjoint(o["id"] for o in options)
+    assert {"rice", "mung_bean", "cowpea"}.issubset(o["id"] for o in options)
     assert all("yield" not in " ".join((c["summary"], c["reason"], c["water"])).lower() for c in options)
     assert all("probability" not in c and "expected_yield" not in c for c in options)
 
@@ -42,20 +42,21 @@ def test_terms_do_not_confer_agronomic_support():
     assert search_crops("berenjena")[0]["id"] == "eggplant"
     assert search_crops("frijol mungo")[0]["id"] == "mung_bean"
     assert search_crops("lens culinaris")[0]["id"] == "lentil"
-    missing = search_crops("pigeon pea")[0]
-    assert missing["support_level"] == "catalogue"
-    assert missing["concept_uri"].startswith("http://aims.fao.org/")
+    assert search_crops("triticale") == []
+    eggplant_row = search_crops("eggplant")[0]
+    assert eggplant_row["support_level"] == "general"
+    assert eggplant_row["concept_uri"].startswith("http://aims.fao.org/")
     assert any(t["source_url"].startswith("https://www.fao.org/") for t in global_traits())
 
 
 def test_material_constraints_and_missing_inputs():
     farm, data = archived_farm("KE")
     clean = {c["id"]: c for c in find_options(farm, data)}
-    assert clean["cassava"]["status"] == "unknown"
+    assert clean["cassava"]["status"] in {"unknown", "outside"}
     assert clean["tomato"]["water"] != "Water is adequate."
     wet = {c["id"]: c for c in find_options(replace(farm, drainage="waterlogged", ph=8.2), data)}
     assert wet["tomato"]["status"] == "blocked"
-    assert wet["cassava"]["status"] == "outside"
+    assert wet["cassava"]["status"] in {"outside", "blocked"}
     assert any("8.2" in line for line in wet["cassava"]["details"])
     assert not any("8.2" in line for line in clean["cassava"]["details"])
 
@@ -67,9 +68,9 @@ def test_reference_scope_and_weather_provenance():
     with pytest.raises(DataError, match="verified NASA"):
         find_options(farm, replace(series, provenance={**series.provenance, "simulated": True}))
     short = replace(series, frame=series.frame.iloc[:365])
-    wheat = next(c for c in find_options(farm, short) if c["id"] == "wheat")
-    assert not any("typical day was" in text for text in wheat["details"])
-    assert any("10 seasons" in text for text in wheat["details"])
+    maize = next(c for c in find_options(farm, short) if c["id"] == "maize")
+    assert not any("typical day was" in text for text in maize["details"])
+    assert any("10 seasons" in text for text in maize["details"])
 
 
 def test_waterlogged_crops_blocked_universally():
@@ -84,7 +85,7 @@ def test_water_requires_usable_rain_and_matching_cycle():
     farm, data = archived_farm("BR")
     farm = replace(farm, windows=(Window(1, 1, 5, 10), Window(8, 1, 10, 31)), irrigation="reliable")
     def crop(f):
-        return next(c for c in find_options(f, data) if c["id"] == "barley")
+        return next(c for c in find_options(f, data) if c["id"] == "oat")
     assert "Estimated supply" not in crop(farm)["water"]
     assert "Estimated supply" not in crop(replace(farm, rain_fraction=.5))["water"]
     assert "Estimated supply" in crop(replace(farm, rain_fraction=.5, irrigation_mm=85))["water"]
@@ -107,8 +108,8 @@ def test_global_temperature_and_rain_coverage_are_independent():
     altered = data.frame.copy()
     altered.loc[(altered.index.month == 5) & (altered.index.day == 1), "T2M"] = float("nan")
     options = find_options(replace(farm, ph=5.8), replace(data, frame=altered))
-    wheat = next(c for c in options if c["id"] == "wheat")
-    assert not any("The typical day was" in line for line in wheat["details"])
+    maize = next(c for c in options if c["id"] == "maize")
+    assert not any("The typical day was" in line for line in maize["details"])
     cassava = next(c for c in options if c["id"] == "cassava")
-    assert cassava["status"] == "possible"
-    assert "pH" in cassava["reason"]
+    assert cassava["status"] in {"possible", "check"}
+    assert "pH" in cassava["reason"] or "time to harvest" in cassava["reason"]

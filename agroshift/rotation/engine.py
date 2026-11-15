@@ -15,6 +15,8 @@ from .timeline_adapter import (
     _cycle_bounds_from_profile,
     _fao_stage_fractions_from_profile,
     build_direct_pair_timeline,
+    compute_collision_probability,
+    resolve_expiry_buffer_days,
 )
 
 
@@ -413,6 +415,8 @@ def _extend_timeline_with_followup_crops(
     monocrop_mode: bool = False,
     turnaround_days: int = 14,
     ref_year: int = 2024,
+    expiry_buffer_days: int | None = None,
+    config: RotationConfig | None = None,
 ) -> None:
     """Extend a 2-slot timeline in-place with Slot 3 and optional Slot 4 crops."""
     want_fourth = (target_slots >= 4) if target_slots is not None else include_fourth
@@ -437,7 +441,7 @@ def _extend_timeline_with_followup_crops(
             followup_ids.append(c4_id)
 
     base_jan1 = date(ref_year, 1, 1)
-    min_buffer = 7
+    min_buffer = resolve_expiry_buffer_days(expiry_buffer_days, config)
     slots: list[dict[str, Any]] = timeline_data["slots"]
 
     for idx, next_id in enumerate(followup_ids):
@@ -463,12 +467,18 @@ def _extend_timeline_with_followup_crops(
             safe_expiry_t = deadline_t - d_max
             hard_expiry_t = deadline_t - d_nom
             turnaround_after = turnaround_days
+            collision_prob = compute_collision_probability(
+                start_t + d_min,
+                start_t + d_max,
+                deadline_t,
+            )
         else:
             latest_start = start_t + 21
             delay_slack = max(0, latest_start - start_t)
             hard_expiry_t = latest_start
             safe_expiry_t = latest_start - max(0, d_max - d_nom)
             turnaround_after = 0
+            collision_prob = 0.0
 
         slots.append(
             _build_slot_dict(
@@ -484,7 +494,7 @@ def _extend_timeline_with_followup_crops(
                 turnaround_buffer_after=turnaround_after,
                 safe_expiry_t=safe_expiry_t,
                 hard_expiry_t=hard_expiry_t,
-                collision_prob=0.0,
+                collision_prob=collision_prob,
             )
         )
 
@@ -591,6 +601,7 @@ def _build_scored_sequence(
         s2_card,
         trans,
         continuous=continuous,
+        config=config,
     )
 
     rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
@@ -712,6 +723,7 @@ def _build_custom_sequence(
         cards_s2=cards_s2,
         target_slots=target_slots,
         monocrop_mode=monocrop_strategy,
+        config=config,
     )
     best_custom["id"] = "custom_" + "_".join(s["crop_id"] for s in best_custom["timeline"]["slots"])
     best_custom["name"] = " → ".join(s["crop_name"] for s in best_custom["timeline"]["slots"])
@@ -922,6 +934,7 @@ def plan_global_rotations(
             cards_s2=cards_s2,
             include_fourth=(idx % 2 == 0) and not monocrop_strategy,
             monocrop_mode=monocrop_strategy,
+            config=config,
         )
         seq["name"] = " → ".join(s["crop_name"] for s in seq["timeline"]["slots"])
 

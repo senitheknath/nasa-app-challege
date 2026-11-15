@@ -28,12 +28,21 @@
   },
   {
     "id": "ecocrop",
-    "name": "FAO ECOCROP",
-    "status": "Catalogue verified",
-    "source": "https://data.apps.fao.org/catalog/dataset/ecocrop",
-    "detail": "Catalogue and public search form verified. No bulk trait export documented there.",
-    "license": "CC BY 4.0 in catalogue",
-    "checked": "2026-11-08"
+    "name": "FAO ECOCROP (via OpenCLIM EcoCrop_DB.csv)",
+    "status": "Live CSV verified",
+    "source": "https://raw.githubusercontent.com/OpenCLIM/ecocrop/main/EcoCrop_DB.csv",
+    "detail": "2,568-species machine-readable FAO EcoCrop snapshot (temperature, pH, rainfall, cycle days, drainage, texture). Expert screening bounds, not site-specific cultivar trials.",
+    "license": "CC BY 4.0 / OpenCLIM MIT",
+    "checked": "2026-11-15"
+  },
+  {
+    "id": "sldoa-hordi",
+    "name": "Sri Lanka DOA HORDI Crop Pages",
+    "status": "References reviewed",
+    "source": "https://doa.gov.lk/hordi-crops/",
+    "detail": "Sri Lanka Horticultural Crop Research and Development Institute (HORDI) cultivar and seasonal guidance.",
+    "license": "Attribution and source-specific reuse terms",
+    "checked": "2026-11-15"
   },
   {
     "id": "agrovoc",

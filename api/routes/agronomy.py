@@ -22,7 +22,7 @@ from agroshift.knowledge import crop_by_id, global_traits
 from agroshift.pests import evaluate_crop_pest_context
 from agroshift.power import DataError
 from agroshift.providers import GAEZ_CROP_ID_MAP, gaez_point, gaez_polygon
-from agroshift.rotation import plan_global_rotations
+from agroshift.rotation import RotationConfig, plan_global_rotations
 from agroshift.screening import find_options
 from agroshift.water_balance import seasonal_water_balance_summary
 
@@ -197,6 +197,13 @@ async def rotations(request: Request) -> Response:
         offline = bool(payload.get("offline", False))
         candidate_crop_ids = payload.get("candidate_crop_ids")
         custom_crop_ids = payload.get("custom_crop_ids")
+        raw_expiry_buffer = payload.get("expiry_buffer_days")
+        if raw_expiry_buffer is not None:
+            if isinstance(raw_expiry_buffer, bool):
+                raise ValueError("expiry_buffer_days must be an integer")
+            config = RotationConfig(expiry_buffer_days=int(raw_expiry_buffer))
+        else:
+            config = RotationConfig()
 
         def _run():
             ds = get_dataset(farm.latitude, farm.longitude)
@@ -207,11 +214,15 @@ async def rotations(request: Request) -> Response:
                 candidate_crop_ids=candidate_crop_ids,
                 custom_crop_ids=custom_crop_ids,
                 max_sequences=max_sequences,
+                config=config,
             )
             return {
                 "status": "success",
                 "mode": "continuous" if len(active_farm.windows) < 2 else "bounded_windows",
                 "total": len(plans),
+                "threshold_config": {
+                    "expiry_buffer_days": config.expiry_buffer_days,
+                },
                 "rotations": plans,
             }
 
