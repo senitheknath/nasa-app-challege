@@ -408,12 +408,14 @@ def _extend_timeline_with_followup_crops(
     profiles: dict[str, CropProfile],
     cards_s1: dict[str, dict[str, Any]],
     cards_s2: dict[str, dict[str, Any]],
-    include_fourth: bool,
+    include_fourth: bool = False,
+    target_slots: int | None = None,
     monocrop_mode: bool = False,
     turnaround_days: int = 14,
     ref_year: int = 2024,
 ) -> None:
     """Extend a 2-slot timeline in-place with Slot 3 and optional Slot 4 crops."""
+    want_fourth = (target_slots >= 4) if target_slots is not None else include_fourth
     if monocrop_mode:
         followup_ids = [c1_id]
     else:
@@ -425,7 +427,7 @@ def _extend_timeline_with_followup_crops(
             c2_id, used_ids, used_families, follow_pool, profiles, cards_s2, cards_s1
         )
         followup_ids = [c3_id]
-        if include_fourth:
+        if want_fourth:
             used_ids.add(c3_id)
             if profiles[c3_id].family:
                 used_families.add(profiles[c3_id].family)
@@ -487,11 +489,314 @@ def _extend_timeline_with_followup_crops(
         )
 
 
+def _ensure_profile(
+    cid: str,
+    profiles: dict[str, CropProfile],
+    cards_s1: dict[str, dict[str, Any]],
+    traits_by_crop: dict[str, dict],
+) -> None:
+    """Populate a CropProfile into `profiles` if not already loaded."""
+    if cid not in profiles:
+        profiles[cid] = CropProfile.from_crop_and_traits(
+            crop_by_id(cid) or {"id": cid, "name": cards_s1[cid]["name"]},
+            traits_by_crop.get(cid),
+            growth_stages=growth_stages(cid),
+            pest_records=pest_context(cid),
+        )
+
+
+def _compute_filter_scores(
+    rating_info: dict[str, Any],
+    easiness_matrix: dict[str, Any],
+    ease_adjusted_score: float,
+) -> dict[str, float]:
+    """Compute 0-100 per-goal filter scores from rating components and easiness factors."""
+    factors = easiness_matrix["factors"]
+    f_water = float(factors.get("water_irrigation_dependency", 5.0))
+    f_soil = float(factors.get("soil_nutrient_intervention", 5.0))
+    f_pest = float(factors.get("pest_pathogen_vigilance", 5.0))
+    clim = float(rating_info["components"].get("climate_suitability", 25.0))
+    syn = float(rating_info["components"].get("transition_synergy", 20.0))
+    return {
+        "default": round(float(rating_info["score"]), 1),
+        "water": round(min(100.0, max(0.0, (10.0 - f_water) * 6.5 + clim * 0.85)), 1),
+        "soil": round(min(100.0, max(0.0, (10.0 - f_soil) * 6.5 + syn * 1.0)), 1),
+        "pest": round(min(100.0, max(0.0, (10.0 - f_pest) * 6.5 + syn * 1.0)), 1),
+        "ease": round(min(100.0, max(0.0, float(ease_adjusted_score))), 1),
+    }
+
+
+def _build_scored_sequence(
+    c1_id: str,
+    c2_id: str,
+    *,
+    profiles: dict[str, CropProfile],
+    cards_s1: dict[str, dict[str, Any]],
+    cards_s2: dict[str, dict[str, Any]],
+    farm: Any,
+    prev_profile: CropProfile | None,
+    w1: Window,
+    w2: Window,
+    continuous: bool,
+    config: RotationConfig,
+    is_custom: bool = False,
+) -> dict[str, Any]:
+    """Evaluate and score a 2-crop rotation pair into a sequence dict."""
+    p1 = profiles[c1_id]
+    p2 = profiles[c2_id]
+    s1_card = cards_s1[c1_id]
+    s2_card = cards_s2[c2_id]
+
+    w1_info = s1_card.get("water") if isinstance(s1_card.get("water"), dict) else {}
+    w2_info = s2_card.get("water") if isinstance(s2_card.get("water"), dict) else {}
+    env = EnvironmentContext(
+        drainage=getattr(farm, "drainage", "unknown") or "unknown",
+        soil_texture=getattr(farm, "soil_type", "unknown") or "unknown",
+        soil_ph=getattr(farm, "ph", None),
+        slope_pct=getattr(farm, "slope", None),
+        irrigation=getattr(farm, "irrigation", "unknown") or "unknown",
+        rainfall_s1_mm=w1_info.get("rainfall_mm"),
+        water_need_s1_mm=w1_info.get("water_need_mm"),
+        water_need_s2_mm=w2_info.get("water_need_mm"),
+    )
+
+    trans = evaluate_transition(
+        p1,
+        p2,
+        previous_crop=prev_profile,
+        w1=w1,
+        w2=None if continuous else w2,
+        config=config,
+        env=env,
+    )
+
+    slot_blocked = s1_card["status"] == "blocked" or s2_card["status"] == "blocked" or trans["status"] == "blocked"
+    if slot_blocked:
+        overall_status = "blocked"
+    elif s1_card["status"] == "outside" or s2_card["status"] == "outside":
+        overall_status = "outside"
+    elif trans["status"] == "caution":
+        overall_status = "caution"
+    elif s1_card["status"] == "possible" and s2_card["status"] == "possible" and trans["status"] == "complementary":
+        overall_status = "complementary"
+    else:
+        overall_status = "conditional"
+
+    timeline_data = build_direct_pair_timeline(
+        p1,
+        p2,
+        w1,
+        w2,
+        s1_card,
+        s2_card,
+        trans,
+        continuous=continuous,
+    )
+
+    rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
+    easiness_matrix = compute_easiness_matrix(
+        s1_card, s2_card, p1, p2, trans, timeline_data, env
+    )
+    ease_adjusted_score = round(
+        0.65 * rating_info["score"] + 3.5 * easiness_matrix["easiness_score"], 1
+    )
+    filter_scores = _compute_filter_scores(rating_info, easiness_matrix, ease_adjusted_score)
+
+    return {
+        "id": f"{c1_id}_then_{c2_id}",
+        "name": f"{p1.name} → {p2.name}",
+        "overall_status": overall_status,
+        "score": rating_info["score"],
+        "rating": rating_info["rating"],
+        "components": rating_info["components"],
+        "easiness_matrix": easiness_matrix,
+        "ease_adjusted_score": ease_adjusted_score,
+        "filter_scores": filter_scores,
+        "is_custom": is_custom,
+        "summary": trans["summary"],
+        "season_1": {
+            "window": w1.label,
+            "crop_id": c1_id,
+            "crop_name": p1.name,
+            "family": p1.family,
+            "status": s1_card["status"],
+            "reason": s1_card.get("reason", ""),
+            "water": s1_card.get("water", {}),
+        },
+        "season_2": {
+            "window": w2.label,
+            "crop_id": c2_id,
+            "crop_name": p2.name,
+            "family": p2.family,
+            "status": s2_card["status"],
+            "reason": s2_card.get("reason", ""),
+            "water": s2_card.get("water", {}),
+        },
+        "transition": trans,
+        "timeline": timeline_data,
+    }
+
+
+def _build_custom_sequence(
+    valid_custom_ids: list[str],
+    *,
+    pinned_c1: str | None,
+    pool: list[str],
+    follow_pool: list[str],
+    profiles: dict[str, CropProfile],
+    cards_s1: dict[str, dict[str, Any]],
+    cards_s2: dict[str, dict[str, Any]],
+    traits_by_crop: dict[str, dict],
+    farm: Any,
+    prev_profile: CropProfile | None,
+    w1: Window,
+    w2: Window,
+    continuous: bool,
+    config: RotationConfig,
+    monocrop_strategy: bool,
+    top_regional: dict[str, Any] | None,
+    order_map: dict[str, int],
+) -> dict[str, Any]:
+    """Score the best rotation ordering of `valid_custom_ids` with gap comparison and smart swap."""
+    for cid in valid_custom_ids:
+        _ensure_profile(cid, profiles, cards_s1, traits_by_crop)
+
+    if pinned_c1 and pinned_c1 in cards_s1:
+        c2_candidates = [cid for cid in valid_custom_ids if cid != pinned_c1] or valid_custom_ids
+        candidate_pairs = [(pinned_c1, c2_id) for c2_id in c2_candidates]
+    elif len(valid_custom_ids) >= 2:
+        candidate_pairs = [
+            (c1_id, c2_id)
+            for c1_id in valid_custom_ids
+            for c2_id in valid_custom_ids
+            if c1_id != c2_id
+        ]
+    else:
+        candidate_pairs = [(valid_custom_ids[0], valid_custom_ids[0])]
+
+    custom_sequences = [
+        _build_scored_sequence(
+            c1_id,
+            c2_id,
+            profiles=profiles,
+            cards_s1=cards_s1,
+            cards_s2=cards_s2,
+            farm=farm,
+            prev_profile=prev_profile,
+            w1=w1,
+            w2=w2,
+            continuous=continuous,
+            config=config,
+            is_custom=True,
+        )
+        for c1_id, c2_id in candidate_pairs
+    ]
+    custom_sequences.sort(
+        key=lambda r: (
+            -r["score"],
+            order_map.get(r["overall_status"], 9),
+            r["name"].casefold(),
+        )
+    )
+    best_custom = custom_sequences[0]
+
+    custom_follow_pool = list(dict.fromkeys(list(valid_custom_ids) + follow_pool))
+    target_slots = min(4, max(3, len(valid_custom_ids)))
+    _extend_timeline_with_followup_crops(
+        best_custom["timeline"],
+        c1_id=best_custom["season_1"]["crop_id"],
+        c2_id=best_custom["season_2"]["crop_id"],
+        follow_pool=custom_follow_pool,
+        profiles=profiles,
+        cards_s1=cards_s1,
+        cards_s2=cards_s2,
+        target_slots=target_slots,
+        monocrop_mode=monocrop_strategy,
+    )
+    best_custom["id"] = "custom_" + "_".join(s["crop_id"] for s in best_custom["timeline"]["slots"])
+    best_custom["name"] = " → ".join(s["crop_name"] for s in best_custom["timeline"]["slots"])
+    best_custom["is_custom"] = True
+
+    if top_regional is not None:
+        gap_pts = round(best_custom["score"] - top_regional["score"], 1)
+    else:
+        gap_pts = 0.0
+
+    if gap_pts >= 0:
+        reason = "★ Matches or beats top regional rotation"
+    else:
+        c_factors = best_custom["easiness_matrix"]["factors"]
+        f_pest = float(c_factors.get("pest_pathogen_vigilance", 5.0))
+        f_water = float(c_factors.get("water_irrigation_dependency", 5.0))
+        f_soil = float(c_factors.get("soil_nutrient_intervention", 5.0))
+        if best_custom["transition"]["status"] in ("caution", "blocked") or f_pest >= 4.0:
+            reason = "Same-family or shared pest risk lowers score"
+        elif f_water >= 4.5:
+            reason = "Higher water demand in dry window"
+        elif f_soil >= 4.5:
+            reason = "Heavy nutrient demand without legume fixer"
+        else:
+            reason = "Lower seasonal climate fit than #1 regional plan"
+    best_custom["custom_comparison"] = {"gap_pts": gap_pts, "reason": reason}
+
+    c1_id = best_custom["season_1"]["crop_id"]
+    c2_id = best_custom["season_2"]["crop_id"]
+    replace_slot_1 = bool(not pinned_c1 and cards_s1[c1_id]["status"] != "possible")
+    weak_cid = c1_id if replace_slot_1 else c2_id
+
+    custom_set = set(valid_custom_ids)
+    swap_candidates = [
+        cid for cid in pool if cid not in custom_set and cid in cards_s1 and cid in cards_s2
+    ]
+    best_rep_cid: str | None = None
+    best_alt_score = best_custom["score"]
+    for rep_cid in swap_candidates:
+        _ensure_profile(rep_cid, profiles, cards_s1, traits_by_crop)
+        alt_c1 = rep_cid if replace_slot_1 else c1_id
+        alt_c2 = c2_id if replace_slot_1 else rep_cid
+        alt_seq = _build_scored_sequence(
+            alt_c1,
+            alt_c2,
+            profiles=profiles,
+            cards_s1=cards_s1,
+            cards_s2=cards_s2,
+            farm=farm,
+            prev_profile=prev_profile,
+            w1=w1,
+            w2=w2,
+            continuous=continuous,
+            config=config,
+            is_custom=True,
+        )
+        if alt_seq["score"] > best_alt_score:
+            best_alt_score = alt_seq["score"]
+            best_rep_cid = rep_cid
+
+    if best_rep_cid is not None:
+        gain_pts = round(best_alt_score - best_custom["score"], 1)
+        if gain_pts >= 2.0:
+            best_custom["smart_swap"] = {
+                "replace_crop_id": weak_cid,
+                "replace_crop_name": profiles[weak_cid].name,
+                "with_crop_id": best_rep_cid,
+                "with_crop_name": profiles[best_rep_cid].name,
+                "gain_pts": gain_pts,
+                "reason": (
+                    "Fixes soil nitrogen"
+                    if profiles[best_rep_cid].is_nitrogen_fixer
+                    else "Better climate & family fit"
+                ),
+            }
+
+    return best_custom
+
+
 def plan_global_rotations(
     farm: Any,
     dataset: Any,
     *,
     candidate_crop_ids: list[str] | None = None,
+    custom_crop_ids: Sequence[str] | None = None,
     max_sequences: int = 16,
     config: RotationConfig = RotationConfig(),
     strategy: str | None = None,
@@ -566,116 +871,33 @@ def plan_global_rotations(
         c2_pool = pool
 
     profile_ids = list(dict.fromkeys(c1_pool + c2_pool))
-    profiles = {
-        cid: CropProfile.from_crop_and_traits(
-            crop_by_id(cid) or {"id": cid, "name": cards_s1[cid]["name"]},
-            traits_by_crop.get(cid),
-            growth_stages=growth_stages(cid),
-            pest_records=pest_context(cid),
-        )
-        for cid in profile_ids
-    }
+    profiles: dict[str, CropProfile] = {}
+    for cid in profile_ids:
+        _ensure_profile(cid, profiles, cards_s1, traits_by_crop)
 
     follow_pool = list(dict.fromkeys(c2_pool + c1_pool))
     monocrop_strategy = (
         strategy == "continuous" or getattr(farm, "strategy", None) == "continuous"
     )
 
-    sequences: list[dict[str, Any]] = []
-    for c1_id in c1_pool:
-        for c2_id in c2_pool:
-            p1 = profiles[c1_id]
-            p2 = profiles[c2_id]
-            s1_card = cards_s1[c1_id]
-            s2_card = cards_s2[c2_id]
-
-            w1_info = s1_card.get("water") if isinstance(s1_card.get("water"), dict) else {}
-            w2_info = s2_card.get("water") if isinstance(s2_card.get("water"), dict) else {}
-            env = EnvironmentContext(
-                drainage=getattr(farm, "drainage", "unknown") or "unknown",
-                soil_texture=getattr(farm, "soil_type", "unknown") or "unknown",
-                soil_ph=getattr(farm, "ph", None),
-                slope_pct=getattr(farm, "slope", None),
-                irrigation=getattr(farm, "irrigation", "unknown") or "unknown",
-                rainfall_s1_mm=w1_info.get("rainfall_mm"),
-                water_need_s1_mm=w1_info.get("water_need_mm"),
-                water_need_s2_mm=w2_info.get("water_need_mm"),
-            )
-
-            trans = evaluate_transition(
-                p1,
-                p2,
-                previous_crop=prev_profile,
-                w1=w1,
-                w2=None if continuous else w2,
-                config=config,
-                env=env,
-            )
-
-            slot_blocked = s1_card["status"] == "blocked" or s2_card["status"] == "blocked" or trans["status"] == "blocked"
-            if slot_blocked:
-                overall_status = "blocked"
-            elif s1_card["status"] == "outside" or s2_card["status"] == "outside":
-                overall_status = "outside"
-            elif trans["status"] == "caution":
-                overall_status = "caution"
-            elif s1_card["status"] == "possible" and s2_card["status"] == "possible" and trans["status"] == "complementary":
-                overall_status = "complementary"
-            else:
-                overall_status = "conditional"
-
-            timeline_data = build_direct_pair_timeline(
-                p1,
-                p2,
-                w1,
-                w2,
-                s1_card,
-                s2_card,
-                trans,
-                continuous=continuous,
-            )
-
-            rating_info = rate_rotation_sequence(s1_card, s2_card, trans, timeline_data)
-            easiness_matrix = compute_easiness_matrix(
-                s1_card, s2_card, p1, p2, trans, timeline_data, env
-            )
-            ease_adjusted_score = round(
-                0.65 * rating_info["score"] + 3.5 * easiness_matrix["easiness_score"], 1
-            )
-
-            sequences.append(
-                {
-                    "id": f"{c1_id}_then_{c2_id}",
-                    "name": f"{p1.name} → {p2.name}",
-                    "overall_status": overall_status,
-                    "score": rating_info["score"],
-                    "rating": rating_info["rating"],
-                    "components": rating_info["components"],
-                    "easiness_matrix": easiness_matrix,
-                    "ease_adjusted_score": ease_adjusted_score,
-                    "summary": trans["summary"],
-                    "season_1": {
-                        "window": w1.label,
-                        "crop_id": c1_id,
-                        "crop_name": p1.name,
-                        "family": p1.family,
-                        "status": s1_card["status"],
-                        "reason": s1_card.get("reason", ""),
-                        "water": s1_card.get("water", {}),
-                    },
-                    "season_2": {
-                        "window": w2.label,
-                        "crop_id": c2_id,
-                        "crop_name": p2.name,
-                        "family": p2.family,
-                        "status": s2_card["status"],
-                        "reason": s2_card.get("reason", ""),
-                        "water": s2_card.get("water", {}),
-                    },
-                    "transition": trans,
-                    "timeline": timeline_data,
-                }
-            )
+    sequences: list[dict[str, Any]] = [
+        _build_scored_sequence(
+            c1_id,
+            c2_id,
+            profiles=profiles,
+            cards_s1=cards_s1,
+            cards_s2=cards_s2,
+            farm=farm,
+            prev_profile=prev_profile,
+            w1=w1,
+            w2=w2,
+            continuous=continuous,
+            config=config,
+            is_custom=False,
+        )
+        for c1_id in c1_pool
+        for c2_id in c2_pool
+    ]
 
     order_map = {"complementary": 0, "conditional": 1, "caution": 2, "outside": 3, "blocked": 4}
     sequences.sort(
@@ -702,6 +924,48 @@ def plan_global_rotations(
             monocrop_mode=monocrop_strategy,
         )
         seq["name"] = " → ".join(s["crop_name"] for s in seq["timeline"]["slots"])
+
+    valid_custom_ids = (
+        list(
+            dict.fromkeys(
+                cid
+                for cid in custom_crop_ids
+                if isinstance(cid, str) and cid in cards_s1 and cid in cards_s2
+            )
+        )
+        if isinstance(custom_crop_ids, Sequence) and not isinstance(custom_crop_ids, (str, bytes))
+        else []
+    )
+    if valid_custom_ids:
+        best_custom = _build_custom_sequence(
+            valid_custom_ids,
+            pinned_c1=pinned_c1,
+            pool=pool,
+            follow_pool=follow_pool,
+            profiles=profiles,
+            cards_s1=cards_s1,
+            cards_s2=cards_s2,
+            traits_by_crop=traits_by_crop,
+            farm=farm,
+            prev_profile=prev_profile,
+            w1=w1,
+            w2=w2,
+            continuous=continuous,
+            config=config,
+            monocrop_strategy=monocrop_strategy,
+            top_regional=result[0] if result else None,
+            order_map=order_map,
+        )
+        result.append(best_custom)
+        result.sort(
+            key=lambda r: (
+                -r["score"],
+                order_map.get(r["overall_status"], 9),
+                r["name"].casefold(),
+            )
+        )
+        for idx, seq in enumerate(result, start=1):
+            seq["rank"] = idx
 
     ease_sorted = sorted(
         result,

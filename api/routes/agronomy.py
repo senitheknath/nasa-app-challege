@@ -196,6 +196,7 @@ async def rotations(request: Request) -> Response:
         auto_env = bool(payload.get("auto_env", True))
         offline = bool(payload.get("offline", False))
         candidate_crop_ids = payload.get("candidate_crop_ids")
+        custom_crop_ids = payload.get("custom_crop_ids")
 
         def _run():
             ds = get_dataset(farm.latitude, farm.longitude)
@@ -204,6 +205,7 @@ async def rotations(request: Request) -> Response:
                 active_farm,
                 ds,
                 candidate_crop_ids=candidate_crop_ids,
+                custom_crop_ids=custom_crop_ids,
                 max_sequences=max_sequences,
             )
             return {
