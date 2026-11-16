@@ -17,7 +17,7 @@ def test_private_repository_isolation_conflicts_and_history():
     from agroshift.knowledge_store import ROOT, postgres_connect, migrate
     from agroshift.private_store import PrivateStore
     from agroshift.farm_records import profile
-    from agroshift.assistant import DEMO_SCENARIOS
+    from agroshift.presets import DEMO_SCENARIOS
     from agroshift.power import DataError
 
     salt = uuid.uuid4().hex[:12]
